@@ -47,7 +47,7 @@ A **three-phase security architecture** implementing:
 
 - [Architecture](#-architecture)
 - [Technologies Used](#-technologies-used)
-- [Phase 1: Network Segmentation and Least Privilege Access Controls](#-phase-1-Network-Segmentation-and-Least-Privilege-Access-Controls)
+- [Phase 1: Network Segmentation and Least Privilege Access Controls](#-phase-1-network-segmentation-and-least-privilege-access-controls)
   - [1.1 VPC Network Design](#11-vpc-network-design)
   - [1.2 Security Group Microsegmentation](#12-security-group-microsegmentation)
   - [1.3 CloudTrail Audit Logging](#13-cloudtrail-audit-logging)
@@ -151,7 +151,7 @@ A **three-phase security architecture** implementing:
 
 ---
 
-## 🔐 Phase 1: Zero Trust Foundation
+## 🔐 Phase 1: Network Segmentation and Least Privilege Access Controls
 
 ### Objective
 
