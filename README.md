@@ -45,8 +45,7 @@ A **three-phase security architecture** implementing:
 
 ## 📚 Table of Contents
 
-- [Architecture](#-architecture)
-- [Technologies Used](#-technologies-used)
+- [Technology Stack](#-technology-stack)
 - [Phase 1: Network Segmentation and Least Privilege Access Controls](#-phase-1-network-segmentation-and-least-privilege-access-controls)
   - [1.1 VPC Network Design](#11-vpc-network-design)
   - [1.2 Security Group Microsegmentation](#12-security-group-microsegmentation)
@@ -63,91 +62,27 @@ A **three-phase security architecture** implementing:
 
 ---
 
-## 🏗️ Architecture
-
-### High-Level Architecture Diagram
-
-![Architecture Overview](diagrams/architecture-overview.png)
-
-*Figure 1: Complete security architecture showing network segmentation, SIEM integration, and automated response workflows*
-
-### Component Overview
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                          AWS Cloud                              │
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │  VPC: 10.0.0.0/16                                        │  │
-│  │                                                          │  │
-│  │  ┌─────────────────────┐    ┌──────────────────────┐   │  │
-│  │  │ Public Subnet       │    │ Private Subnet       │   │  │
-│  │  │ 10.0.1.0/24         │    │ 10.0.11.0/24         │   │  │
-│  │  │                     │    │                      │   │  │
-│  │  │  ┌──────────────┐   │    │  ┌───────────────┐  │   │  │
-│  │  │  │ Web Server   │   │    │  │ Wazuh Manager │  │   │  │
-│  │  │  │ (Wazuh Agent)│◄──┼────┼──│  (SIEM)       │  │   │  │
-│  │  │  │ t2.micro     │   │    │  │  t3.large     │  │   │  │
-│  │  │  └──────────────┘   │    │  └───────────────┘  │   │  │
-│  │  │         │            │    │         │           │   │  │
-│  │  └─────────┼────────────┘    └─────────┼───────────┘   │  │
-│  │            │                            │               │  │
-│  │            │                            │               │  │
-│  │     ┌──────▼────────────────────────────▼─────────┐    │  │
-│  │     │         Internet Gateway / NAT Gateway      │    │  │
-│  │     └──────────────────────────────────────────────┘    │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                 │
-│  ┌──────────────┐      ┌─────────────┐      ┌──────────────┐  │
-│  │  CloudTrail  │      │ VPC Flow    │      │   Lambda     │  │
-│  │  (S3 Logs)   │──────│    Logs     │──────│ (Auto-Fix)   │  │
-│  └──────────────┘      └─────────────┘      └──────────────┘  │
-│         │                     │                     ▲          │
-│         └─────────────────────┼─────────────────────┘          │
-│                               │                                │
-│                       ┌───────▼───────┐                        │
-│                       │  EventBridge  │                        │
-│                       └───────────────┘                        │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Technology Stack
+## 🛠️ Technology Stack
 
 | Layer | Technology | Purpose |
 |-------|------------|---------|
-| **Network** | AWS VPC, Security Groups | Microsegmentation, zero trust isolation |
-| **Compute** | EC2 (Ubuntu 22.04) | Web server + SIEM infrastructure |
+| **Network** | AWS VPC, Security Groups | Microsegmentation, network isolation |
+| **Compute** | EC2 (Ubuntu 22.04) | Web server, database, SIEM infrastructure |
 | **SIEM** | Wazuh 4.7.5 | Log aggregation, correlation, alerting |
+| **FIM** | Wazuh FIM | File integrity monitoring |
+| **Visualization** | Wazuh Dashboard | Security monitoring and incident analysis |
 | **Indexing** | OpenSearch (Wazuh Indexer) | Log storage and search |
 | **Logging** | CloudTrail, VPC Flow Logs | AWS API audit + network traffic metadata |
 | **SOAR** | Wazuh Active Response, Bash | Automated IP blocking |
-| **CSPM** | AWS Lambda (Python 3.12) | Auto-remediation of misconfigurations |
+| **CSPM** | AWS Lambda (Python 3.12/Boto3) | Auto-remediation of misconfigurations |
 | **Orchestration** | EventBridge | Event-driven automation triggers |
-| **Access** | AWS Systems Manager | Bastion-less secure access |
+| **Access** | AWS Systems Manager Session Manager | Bastion-less secure access |
 | **IAM** | AWS IAM Roles & Policies | Least-privilege access control |
-
----
-
-## 🛠️ Technologies Used
-
-**Cloud Platform:**
-- AWS VPC, EC2, S3, CloudTrail, VPC Flow Logs
-- AWS Lambda, EventBridge, IAM, Systems Manager
-
-**Security & Monitoring:**
-- **Wazuh 4.7.5** - Open-source SIEM platform
-- **OpenSearch** - Log indexing and analytics
-- **iptables** - Host-based firewall for active response
-
-**Programming & Scripting:**
-- **Python 3.12** - Lambda functions for CSPM
-- **Bash** - Active response automation scripts
-- **XML** - Wazuh detection rule configuration
-- **JSON** - AWS policy documents and event patterns
-
-**Standards & Frameworks:**
-- **MITRE ATT&CK** - Threat detection framework
-- **NIST Cybersecurity Framework** - Security controls alignment
-- **PCI DSS, GDPR, HIPAA** - Compliance mappings
+| **Firewall** | iptables | Host-based firewall for active response |
+| **Cloud Services** | S3, CloudTrail, VPC Flow Logs | Storage, audit logging, network monitoring |
+| **Languages** | Python 3.12, Bash, XML, JSON | Lambda functions, automation, rule configs |
+| **Frameworks** | MITRE ATT&CK, NIST CSF | Threat detection, security controls |
+| **Compliance** | PCI DSS, GDPR, HIPAA | Compliance mappings and controls |
 
 ---
 
@@ -155,13 +90,14 @@ A **three-phase security architecture** implementing:
 
 ### Objective
 
-Implement **network-level zero trust security principles** with microsegmentation, least-privilege access controls, and comprehensive audit logging to establish a secure foundation for cloud infrastructure.
+To build a secure network architecture with proper separation of concerns, implementing security best practices for AWS environments. Aimed to reduce attack surface through strategic subnet placement, least-privilege security groups, and identity-based access controls.
 
-### Zero Trust Principles Applied
+
+### Security Architecture Principles
 
 | Principle | Implementation |
 |-----------|----------------|
-| **Never Trust, Always Verify** | No implicit trust; all connections explicitly allowed |
+| **Minimal Attack Surface** | Eliminated SSH exposure via Session Manager, No port 22 open anywhere. IAM role-based access through Systems Manager. Sessions logged to CloudTrail. No SSH keys to rotate or secure |
 | **Least Privilege Access** | Security groups allow only required ports/protocols |
 | **Assume Breach** | Network segmentation limits lateral movement |
 | **Verify Explicitly** | CloudTrail logs all actions for continuous verification |
@@ -173,502 +109,415 @@ Implement **network-level zero trust security principles** with microsegmentatio
 
 #### Architecture Decision
 
-Implemented a **three-tier VPC architecture** with strict network segmentation:
+I created a VPC with four subnets across two availability zones, strategically separating public-facing infrastructure from the database tier.
 ```
-VPC: 10.0.0.0/16 (65,536 IPs)
-│
-├── Public Subnet: 10.0.1.0/24 (256 IPs)
-│   ├── Purpose: Internet-facing services
-│   ├── Resources: Web server (MyApp)
-│   ├── Internet Gateway: Direct internet access
-│   └── Use Case: DMZ for external-facing applications
-│
-└── Private Subnet: 10.0.11.0/24 (256 IPs)
-    ├── Purpose: Internal infrastructure
-    ├── Resources: Wazuh Manager (SIEM)
-    ├── NAT Gateway: Outbound-only internet access
-    └── Use Case: Sensitive security infrastructure isolation
+- VPC CIDR: 10.0.0.0/16
+- Public Subnet 1 (us-east-1a): 10.0.0.0/20 (Web Server + Wazuh Manager)
+- Public Subnet 2 (us-east-1b): 10.0.16.0/20 (Multi-AZ failover capability)
+- Private Subnet 1 (us-east-1a): 10.0.128.0/20 (Database - Primary)
+- Private Subnet 2 (us-east-1b): 10.0.144.0/20 (Database - Standby/Read Replica)
 ```
-
-#### Network Topology
-
 ![VPC Architecture](screenshots/phase1/01-vpc-architecture.png)
-
 *Figure 1.1: VPC topology showing public and private subnet separation with controlled internet access*
+
+#### Subnet Strategy
+
+**Co-locating Web Server and Wazuh Manager:**
+I placed both the web server and Wazuh Manager in the same public subnet (10.0.0.0/20) with restricted security groups.
+
+**Why public subnets for both:**
+1. **Web Server** - Obviously needs to accept HTTP/HTTPS from the internet
+2. **Wazuh Manager** - Needs to be accessible by the web server agent, and I need dashboard access as the administrator.
+
+In a **production environment**, they should be in a private subnet without a direct internet access but  via NAT Gateway for updates or via **VPN, AWS Private Link or load balancer in a public subnet** for inbound traffic but for a demonstration environment, putting them in a public subnet with strict security group rules was a reasonable trade-off and
+avoids the cost of a NAT Gateway or Application Load Balancer.
+
+**The trade-off:**
+If someone compromises the web server, they're already in the same network segment as the Wazuh Manager. Security groups still protect it by providing instance-level isolation (only specific ports open, dashboard restricted to my IP), but there's less network-level isolation.
+
+**Multi-AZ Architecture:**
+I deployed across two availability zones (us-east-1a and us-east-1b) to demonstrate high availability concepts, even though I'm only running single instances in this demo.
+
+**Why two AZs:**
+- **Database failover capability** - RDS can automatically fail over to the standby subnet if us-east-1a fails
+- **Future scaling** - If I wanted to add a second web server for load balancing, I'd put it in the 1b public subnet
+- **Best practice demonstration** - Shows I understand production architecture.
+
+**Private Subnets (Database Tier):**
+The database lives in the private subnets with no direct internet access:
+- Primary instance in 10.0.128.0/20 (us-east-1a)
+- Standby/read replica capability in 10.0.144.0/20 (us-east-1b)
+- In production environment, both subnets route through NAT Gateway or VPC Endpoint for outbound connections (package updates, OS patches)
+- Zero inbound routes from Internet Gateway.
+
+**Security benefit:**
+The database is network-isolated from the internet. Even if someone compromised both the web server and Wazuh Manager, they'd still need to:
+1. Bypass the security group rules (only port 3306 from sg-web allowed)
+2. Authenticate to the database itself
+3. Navigate the fact that there's no route from the database back to the internet for data exfiltration (would need to proxy through the web server).
+
+This is **defense in depth** - multiple layers have to fail before data is compromised.
+
+### 1.2 Security Group Configuration
+
+Security groups act as stateful firewalls controlling traffic at the instance level. I configured three security groups with very specific rules following the principle of least privilege.
+
+#### Web Server Security Group
+![Web Server Security Group](screenshots/phase1/02-security-groups-web.png)
+
+**Inbound Rules:**
+
+| Type | Protocol | Port | Source | Justification |
+|------|----------|------|--------|---------------|
+| HTTP | TCP | 80 | 0.0.0.0/0 | Public website access |
+| HTTPS | TCP | 443 | 0.0.0.0/0 | Secure public website access |
+
+**Outbound Rules:**
+
+| Type | Protocol | Port | Destination | Justification |
+|------|----------|------|-------------|---------------|
+| HTTP | TCP | 80 | 0.0.0.0/0 | Package repositories |
+| HTTPS | TCP | 443 | 0.0.0.0/0 | Package updates, HTTPS traffic |
+| Custom TCP | TCP | 1514 | sg-wazuh | Wazuh agent event forwarding |
+| Custom TCP | TCP | 1515 | sg-wazuh | Wazuh agent enrollment |
+| Custom TCP | TCP | 55000 | sg-wazuh | Wazuh API communication |
+| MySQL | TCP | 3306 | sg-database | Database queries |
 
 **Key Design Decisions:**
 
-1. **Private Subnet for SIEM**
-   - Wazuh Manager isolated from direct internet access
-   - Reduces attack surface for critical security infrastructure
-   - Outbound access via NAT gateway for updates only
+Notice the outbound rules to Wazuh and the database use **security group references** (sg-wazuh, sg-database) instead of IP addresses. This is important because:
+- If instance IPs change, rules still work
+- Clear intent - "web server talks to Wazuh or Database only on specific ports"
+- Reduces attack surface
+- Easier to audit and maintain
 
-2. **Public Subnet for Web Server**
-   - Accepts HTTP/HTTPS traffic from internet
-   - Agent-to-manager communication via private IPs
-   - Minimal exposed attack surface
+**SSH notably absent:**
+There's no SSH (port 22) rule. Instead, I use AWS Systems Manager Session Manager (configured via IAM role) for administrative access. This eliminates the need to expose SSH and manage SSH keys, which are common attack vectors.
 
-3. **No VPN or Bastion Host**
-   - AWS Systems Manager Session Manager for secure access
-   - Eliminates SSH key management risks
-   - Audit trail for all admin sessions
-
-#### Routing Configuration
-
-**Public Subnet Route Table:**
-```
-Destination         Target
-10.0.0.0/16        local
-0.0.0.0/0          igw-xxxxx (Internet Gateway)
-```
-
-**Private Subnet Route Table:**
-```
-Destination         Target
-10.0.0.0/16        local
-0.0.0.0/0          nat-xxxxx (NAT Gateway)
-```
-
-**Security Benefit:** Private subnet cannot receive inbound internet traffic, only outbound via NAT.
-
----
-
-### 1.2 Security Group Microsegmentation
-
-#### Zero Trust Implementation
-
-Security groups implement **stateful firewall rules** with explicit deny-by-default policy. All rules follow **principle of least privilege** - only necessary ports for specific services.
-
-#### Web Server Security Group (sg-web)
-
-![Web Server Security Group](screenshots/phase1/02-security-groups-web.png)
-
-*Figure 1.2: Web server security group implementing least-privilege access*
-
-**Inbound Rules:**
-
-| Type | Protocol | Port | Source | Justification |
-|------|----------|------|--------|---------------|
-| HTTP | TCP | 80 | 0.0.0.0/0 | Public web access |
-| HTTPS | TCP | 443 | 0.0.0.0/0 | Secure web access |
-
-**Outbound Rules:**
-
-| Type | Protocol | Port | Destination | Justification |
-|------|----------|------|-------------|---------------|
-| Custom TCP | TCP | 1514 | sg-wazuh | Wazuh agent event transmission |
-| Custom TCP | TCP | 1515 | sg-wazuh | Wazuh agent enrollment |
-| HTTPS | TCP | 443 | 0.0.0.0/0 | Package updates (apt/yum) |
-| DNS | UDP | 53 | 0.0.0.0/0 | Domain resolution |
-
-**Zero Trust Analysis:**
-- ✅ No SSH (port 22) exposed to internet
-- ✅ Agent communication only to specific security group (not CIDR)
-- ✅ Explicit egress rules (no 0.0.0.0/0 all protocols)
-- ✅ Security group references prevent IP-based targeting
-
----
-
-#### Wazuh Manager Security Group (sg-wazuh)
+#### Wazuh Manager Security Group
 
 ![Wazuh Manager Security Group](screenshots/phase1/03-security-groups-wazuh.png)
 
-*Figure 1.3: Wazuh Manager security group with strict ingress controls*
-
 **Inbound Rules:**
 
 | Type | Protocol | Port | Source | Justification |
 |------|----------|------|--------|---------------|
-| Custom TCP | TCP | 1514 | sg-web | Agent events (syslog) |
-| Custom TCP | TCP | 1515 | sg-web | Agent enrollment/auth |
+| Custom TCP | TCP | 1514 | sg-web | Agent log events |
+| Custom TCP | TCP | 1515 | sg-web | Agent registration |
 | Custom TCP | TCP | 55000 | sg-web | Wazuh API (agent management) |
-| HTTPS | TCP | 443 | My IP | Dashboard access (admin only) |
+| HTTPS | TCP | 443 | My IP (41.x.x.x/32) | Wazuh dashboard access |
 
 **Outbound Rules:**
 
 | Type | Protocol | Port | Destination | Justification |
 |------|----------|------|-------------|---------------|
-| HTTPS | TCP | 443 | 0.0.0.0/0 | AWS API calls, updates |
-| DNS | UDP | 53 | 0.0.0.0/0 | Domain resolution |
+| HTTPS | TCP | 443 | 0.0.0.0/0 | AWS API calls, package updates |
+| HTTP | TCP | 80 | 0.0.0.0/0 | Domain name resolution |
 
-**Security Hardening:**
-- ✅ No public SSH access
-- ✅ Dashboard restricted to admin IP only
-- ✅ Agent ports only accept traffic from sg-web
-- ✅ No inbound 0.0.0.0/0 except from specific security groups
-- ✅ Egress limited to HTTPS and DNS only
+**Critical security controls:**
 
----
+1. **Agent ports (1514, 1515, 55000) only accept connections from sg-web**
+   - Even though Wazuh Manager is in a public subnet, these ports can't be reached from the internet
+   - Only the web server can connect
+   - If I had multiple agents in production, I'd allow their security groups too
 
-#### Zero Trust Security Group Architecture
+2. **Dashboard access (443) restricted to my IP address**
+   - I'm the only one who can access the Wazuh web interface
+   - This prevents unauthorized access to the SIEM
+   - **In production**, this would be:
+     - Multiple admin IPs (SOC team)
+     - VPN endpoint (all admins route through VPN)
+     - AWS PrivateLink (no public access at all)
+     - Or behind a bastion host in private subnet
 
-**Communication Flow:**
+**Why I allowed my specific IP:**
+The Wazuh dashboard contains sensitive security information - alerts, logs, configuration. Allowing access from only my IP (41.x.x.x/32) means even if someone knew the Wazuh Manager's public IP, they couldn't reach the dashboard. This is a compromise for a demo environment; production would use VPN or PrivateLink to avoid public exposure entirely.
+
+**No SSH here either:**
+
+Same as the web server - using Systems Manager Session Manager via IAM role for administrative access.
+
+#### Database Security Group
+
+![Database Security Group](screenshots/phase1/04-security-groups-database.png)
+
+**Inbound Rules:**
+
+| Type | Protocol | Port | Source | Justification |
+|------|----------|------|--------|---------------|
+| MySQL | TCP | 3306 | sg-web | Database queries from web application |
+
+**Outbound Rules:**
+
+| Type | Protocol | Port | Destination | Justification |
+|------|----------|------|-------------|---------------|
+| All traffic | All | All | 0.0.0.0/0 | Response traffic (stateful) |
+
+
+**Most restrictive security group:**
+The database accepts connections ONLY from the web server security group. Nothing else can reach port 3306.
+
+**In a production environment:**
+
+This rule would be more complex:
 ```
-Internet
-   │
-   ▼
-┌──────────────────┐
-│  Web Server      │  sg-web
-│  10.0.1.5        │  - HTTP/HTTPS from 0.0.0.0/0
-└────────┬─────────┘  - Outbound to sg-wazuh:1514,1515
-         │
-         │ TCP 1514/1515
-         │ (Security Group Reference)
-         │
-         ▼
-┌──────────────────┐
-│  Wazuh Manager   │  sg-wazuh
-│  10.0.11.50      │  - Accept from sg-web only
-└──────────────────┘  - No direct internet access
-         │
-         ▼
-     NAT Gateway
-         │
-         ▼
-     Internet (outbound only)
+Inbound:
+- MySQL (3306) from sg-web
+- MySQL (3306) from sg-wazuh (if Wazuh agents query DB for inventory)
+- MySQL (3306) from NAT Gateway IP (for automated backups)
+- Systems Manager Session Manager via IAM role for administrative access.
+
+```
+For this demo, only the web server needs database access, so that's all I allowed.
+
+**Why the database is in private subnet:**
+
+Even with security group protection, defense in depth means adding network-level isolation. The database:
+- Has no public IP address
+- Cannot be reached from the internet (no IGW route)
+- Must be accessed through instances that ARE in public subnets
+
+This creates layers of security. An attacker would need to:
+1. Compromise the web server
+2. Bypass security group rules
+3. Then reach the database
+
+### 1.3 Identity and Access Management (IAM)
+
+Instead of managing SSH keys and opening port 22, I used AWS IAM roles and Systems Manager Session Manager for secure instance access.
+
+#### Web Server IAM Role
+
+**Attached Policies:**
+- `AmazonSSMManagedInstanceCore` - Enables Session Manager access
+![WEB-IM ROE](screenshots/phase1/04-security-groups-database.png)
+
+**Why this approach:**
+
+Traditional SSH access requires:
+- Managing SSH key pairs
+- Opening port 22 (common attack vector)
+- No audit trail of what commands were run
+- Risk of compromised or leaked keys
+
+Session Manager provides:
+- No SSH keys to manage
+- No port 22 exposure
+- All sessions logged to CloudTrail
+- Can restrict access through IAM policies
+- Can record session commands for compliance
+
+**Access workflow:**
+```
+Admin → AWS Console → Systems Manager → Session Manager → Web Server
+                            ↓
+                      CloudTrail Log
 ```
 
-**Attack Surface Reduced:**
-- ❌ No SSH exposed to internet
-- ❌ No management ports (3389, 22, 5985) accessible
-- ❌ No unnecessary services running
-- ✅ Minimum required ports only
-- ✅ Internal communication via security group references
-- ✅ Admin access via AWS Systems Manager (no public access)
+Every session is logged: who connected, when, and (optionally) what commands they ran.
 
----
+#### Wazuh Manager IAM Role
 
-### 1.3 CloudTrail Audit Logging
+**Attached Policies:**
+1. `AmazonS3ReadOnlyAccess` - Read CloudTrail logs from S3
+2. `AmazonSSMManagedInstanceCore` - Session Manager access
+3. `CloudWatchLogsReadOnlyAccess` - Read CloudWatch logs
 
-#### Objective
+![Wazuh Manager IAM Role](screenshots/phase1/05-iam-role-wazuh.png)
 
-Capture **all AWS API activity** for security monitoring, compliance auditing, and incident investigation. CloudTrail provides an immutable audit log of who did what, when, and from where.
+**Why these permissions:**
 
-#### Configuration
+**1. AmazonS3ReadOnlyAccess:**
 
-**CloudTrail Settings:**
+The Wazuh Manager needs to read CloudTrail logs from the S3 bucket (`zerotrust123`) to ingest AWS API activity into the SIEM. The `aws-s3` module in Wazuh polls this bucket every 10 minutes for new logs.
 
-![CloudTrail Configuration](screenshots/phase1/04-cloudtrail-config.png)
+Read-only is sufficient - Wazuh only needs to `GetObject` and `ListBucket`, not write or delete.
 
-*Figure 1.4: CloudTrail configured for comprehensive API activity logging*
+**2. CloudWatchLogsReadOnlyAccess:**
 
-| Setting | Value | Justification |
-|---------|-------|---------------|
-| **Trail Name** | `zerotrust-trail` | Descriptive naming |
-| **S3 Bucket** | `zerotrust123` | Centralized log storage |
-| **Log File Validation** | Enabled | Detect log tampering |
-| **Encryption** | SSE-S3 | Data at rest protection |
-| **Multi-Region** | Yes | Capture activity across all regions |
-| **Organization Trail** | No | Single account deployment |
+For VPC Flow Logs integration which I configured to go to CloudWatchLogs. 
 
-**Events Logged:**
-- ✅ Management Events (read + write)
-- ✅ Data Events (S3 object-level operations)
-- ✅ Insights Events (anomaly detection)
+**3. AmazonSSMManagedInstanceCore:**
 
-#### S3 Bucket Configuration
+Session Manager access for administrative tasks (checking logs, restarting services, troubleshooting).
 
-**Bucket Policy - Least Privilege:**
+**Least privilege consideration:**
+
+In production, I'd use a custom IAM policy instead of AWS managed policy for S3Bucket Read Access:
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "AWSCloudTrailAclCheck",
       "Effect": "Allow",
-      "Principal": {
-        "Service": "cloudtrail.amazonaws.com"
-      },
-      "Action": "s3:GetBucketAcl",
-      "Resource": "arn:aws:s3:::zerotrust123"
-    },
-    {
-      "Sid": "AWSCloudTrailWrite",
-      "Effect": "Allow",
-      "Principal": {
-        "Service": "cloudtrail.amazonaws.com"
-      },
-      "Action": "s3:PutObject",
-      "Resource": "arn:aws:s3:::zerotrust123/AWSLogs/011555818509/*",
-      "Condition": {
-        "StringEquals": {
-          "s3:x-amz-acl": "bucket-owner-full-control"
-        }
-      }
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::zerotrust123",
+        "arn:aws:s3:::zerotrust123/*"
+      ]
     }
   ]
 }
 ```
+This is more restrictive than `AmazonS3ReadOnlyAccess` which allows reading from ALL S3 buckets in the account. For a demo, the managed policy is fine, but production should be scoped to specific resources.
 
-**Security Features:**
-- ✅ Service-specific principal (not *)
-- ✅ Scoped to account ID
-- ✅ Bucket-owner-full-control enforced
-- ✅ No public access
+---
+
+### 1.4 CloudTrail Audit Logging
+
+#### Why CloudTrail
+
+AWS doesn't log API activity by default. Without CloudTrail, if someone:
+- Modified a security group
+- Created an EC2 instance
+- Changed an IAM policy
+- Accessed an S3 bucket
+
+...there would be no record of it. CloudTrail provides an audit trail of every API call made in the AWS account and it's immutable.
+
+**What CloudTrail captures:**
+
+For every API call:
+- **Who** - IAM user or role that made the call
+- **What** - The specific action (RunInstances, DeleteBucket, etc.)
+- **When** - Timestamp
+- **Where** - Source IP address and AWS region
+- **How** - Whether it succeeded or failed
+- **Why** - Request parameters (what was changed)
+
+#### Configuration
+
+![CloudTrail Configuration](screenshots/phase1/06-cloudtrail-config.png)
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| **Trail Name** | zerotrust-trail | Descriptive naming |
+| **S3 Bucket** | zerotrust123 | Centralized log storage |
+| **Log File Validation** | Enabled | Detect log tampering |
+| **Multi-Region** | Yes | Capture activity across all AWS regions |
+| **Management Events** | All (read + write) | Complete visibility |
+
+**S3 bucket for logs:**
+
+CloudTrail writes logs to S3 bucket `zerotrust123`. I configured the bucket with:
+- Server-side encryption (SSE-S3)
+- Versioning enabled (can't overwrite logs)
+- Block public access (logs should never be public)
+
+**Bucket policy - least privilege:**
+
+Only CloudTrail service can write to this bucket:
+```json
+{
+	"Version": "2012-10-17",
+	"Statement": [
+		{
+			"Sid": "AWSCloudTrailAclCheck20150319-b3f0c3ca-3e2c-46a2-bb6f-84b9816fe146",
+			"Effect": "Allow",
+			"Principal": {
+				"Service": "cloudtrail.amazonaws.com"
+			},
+			"Action": "s3:GetBucketAcl",
+			"Resource": "arn:aws:s3:::zerotrust123",
+			"Condition": {
+				"StringEquals": {
+					"AWS:SourceArn": "arn:aws:cloudtrail:us-east-1:011555818509:trail/ZeroTrust-Trail"
+				}
+			}
+		},
+		{
+			"Sid": "AWSCloudTrailWrite20150319-db5b4ad8-3321-49ba-b688-ee03fb63efe1",
+			"Effect": "Allow",
+			"Principal": {
+				"Service": "cloudtrail.amazonaws.com"
+			},
+			"Action": "s3:PutObject",
+			"Resource": "arn:aws:s3:::zerotrust123/AWSLogs/011555818509/*",
+			"Condition": {
+				"StringEquals": {
+					"AWS:SourceArn": "arn:aws:cloudtrail:us-east-1:011555818509:trail/ZeroTrust-Trail",
+					"s3:x-amz-acl": "bucket-owner-full-control"
+				}
+			}
+		}
+	]
+}
+```
+#### Integration with Wazuh
+
+CloudTrail logs are ingested into Wazuh SIEM (configured in Phase 2) for real-time monitoring. This enables:
+- Alerts on suspicious API calls (privilege escalation, security group changes)
+- Correlation with host-based events
+- Investigation of security incidents
+- Compliance reporting
 
 #### Events Captured
 
-**Critical Security Events Monitored:**
-
-| Event Category | Examples | Security Impact |
-|----------------|----------|-----------------|
-| **IAM Changes** | CreateUser, AttachUserPolicy, DeleteRole | Privilege escalation detection |
-| **Network Modifications** | AuthorizeSecurityGroupIngress | Firewall rule changes |
-| **Resource Creation** | RunInstances, CreateBucket | Shadow IT detection |
-| **Data Access** | GetObject, PutBucketPolicy | Data exfiltration indicators |
-| **Console Logins** | ConsoleLogin | Account compromise detection |
-
-#### Compliance Mapping
-
-**Regulatory Requirements Met:**
-
-- **PCI DSS 10.2.2:** Audit trail for all actions by privileged users
-- **PCI DSS 10.2.5:** Audit trail for invalid access attempts
-- **GDPR Article 32:** Security of processing (audit logs)
-- **HIPAA 164.312(b):** Audit controls
-- **SOC 2 CC6.1:** Logical access controls - audit logging
-
-**Retention:**
-- CloudTrail logs retained indefinitely in S3
-- S3 versioning enabled to prevent deletion
-- S3 Object Lock considered for compliance immutability
-
-#### Integration with Wazuh
-
-CloudTrail logs are ingested into Wazuh SIEM (configured in Phase 2) for:
-- Real-time alerting on suspicious API calls
-- Correlation with host-based events
-- Custom detection rules for cloud-specific threats
-- Dashboards for security visibility
+**Example CloudTrail events logged:**
+![CloudTrail Configuration](screenshots/phase1/06-cloudtrail-config.png)
 
 ---
 
-### 1.4 VPC Flow Logs
+### 1.5 VPC Flow Logs
 
-#### Objective
+#### Purpose
 
-Capture **network traffic metadata** for network forensics, threat detection, and troubleshooting. VPC Flow Logs provide visibility into allowed and rejected connections at the network interface level.
+VPC Flow Logs capture metadata about network traffic - not the packet contents, but information about connections:
+- Which IPs are talking to each other
+- What ports they're using
+- Whether the connection was allowed or denied
+- How much data was transferred
+
+This is useful for:
+- Detecting port scanning
+- Identifying data exfiltration
+- Troubleshooting connectivity issues
+- Network forensics during incidents
 
 #### Configuration
 
-**VPC Flow Logs Settings:**
+![VPC Flow Logs](screenshots/phase1/07-vpc-flowlogs.png)
 
-![VPC Flow Logs Configuration](screenshots/phase1/05-vpc-flowlogs-config.png)
+| Setting | Value | Why |
+|---------|-------|-----|
+| **Filter** | All (Accept + Reject) | See both allowed and blocked traffic |
+| **Destination** | Cloudwatch Log | Long-term storage |
+| **Aggregation** | 10 minutes | Balance between detail and cost |
 
-*Figure 1.5: VPC Flow Logs configured with zero trust IAM role*
+**IAM Role for VPC Flow Logs:**
 
-| Setting | Value | Justification |
-|---------|-------|---------------|
-| **Filter** | All (Accept + Reject) | Full network visibility |
-| **Destination** | S3 bucket `vpcflowlog-olaedo` | Centralized storage |
-| **Log Format** | Default | Standard fields for analysis |
-| **Aggregation Interval** | 10 minutes | Balance between detail and cost |
-| **IAM Role** | `vpcflowlog-s3` | Least-privilege access |
+This follows least privilege - only the VPC Flow Logs service can
 
-#### Zero Trust IAM Role Design
+#### Security Posture Achieved
 
-**Custom IAM Role Implementation:**
+**Attack surface reduction:**
 
-![IAM Role for VPC Flow Logs](screenshots/phase1/06-vpcflowlogs-iam-role.png)
+| Before | After | Improvement |
+|--------|-------|-------------|
+| SSH exposed to internet | No SSH exposure (Session Manager) | Eliminated common attack vector |
+| No API activity logging | CloudTrail enabled | Complete audit trail |
+| No network visibility | VPC Flow Logs collecting | Network forensics capability |
+| Overly permissive SGs | Least-privilege rules | Reduced blast radius |
+| No database isolation | Private subnet isolation | Defense in depth |
 
-*Figure 1.6: Zero trust IAM role with service-specific trust policy*
+**What this architecture accomplishes:**
+- Separates public-facing and sensitive infrastructure
+- Reduces attack surface through security group least privilege
+- Eliminates SSH key management risks
+- Provides foundation for SIEM monitoring (Phase 2)
+- Creates audit trail for compliance and incident response
 
-**Trust Policy:**
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Service": "vpc-flow-logs.amazonaws.com"
-      },
-      "Action": "sts:AssumeRole"
-    }
-  ]
-}
-```
+**Where it falls short of enterprise production:**
+- Wazuh Manager should be in private subnet or behind VPN
+- Should use AWS PrivateLink to eliminate public internet traffic for AWS API calls
+- IAM policies could be more granular
+- Missing DDoS protection (AWS Shield Advanced)
+- Single points of failure (no high availability)
 
-**Permissions Policy:**
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "s3:PutObject"
-      ],
-      "Resource": "arn:aws:s3:::vpcflowlog-olaedo/*"
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
-        "s3:GetBucketLocation",
-        "s3:ListBucket"
-      ],
-      "Resource": "arn:aws:s3:::vpcflowlog-olaedo"
-    }
-  ]
-}
-```
-
-**Zero Trust Principles:**
-- ✅ Service-specific principal (not wildcards)
-- ✅ Scoped to specific S3 bucket only
-- ✅ Minimum required actions (PutObject, not DeleteObject)
-- ✅ No resource wildcards (specific bucket ARN)
-
-#### Network Traffic Captured
-
-**Flow Log Fields:**
-```
-version account-id interface-id srcaddr dstaddr srcport dstport protocol packets bytes start end action log-status
-```
-
-**Example Flow Log Entry:**
-```
-2 011555818509 eni-1234abcd 10.0.1.5 10.0.11.50 49152 1514 6 20 1500 1634567890 1634567950 ACCEPT OK
-```
-
-**Interpretation:**
-- **srcaddr:** Web server (10.0.1.5)
-- **dstaddr:** Wazuh Manager (10.0.11.50)
-- **srcport:** Ephemeral port (49152)
-- **dstport:** Wazuh agent port (1514)
-- **protocol:** TCP (6)
-- **action:** ACCEPT (allowed by security group)
-
-#### Security Use Cases
-
-**VPC Flow Logs Enable:**
-
-| Use Case | Detection Capability |
-|----------|---------------------|
-| **Port Scanning** | Detect connections to multiple ports from single source |
-| **Data Exfiltration** | Identify unusual outbound data volumes |
-| **Denied Connections** | Find attempts to access blocked ports |
-| **Lateral Movement** | Detect unexpected internal-to-internal traffic |
-| **DDoS Attacks** | Identify abnormal traffic patterns |
-
-**Example Detection:**
-```bash
-# Find all REJECT events (attempted unauthorized access)
-aws s3 cp s3://vpcflowlog-olaedo/ - --recursive | grep REJECT
-
-# Result: Shows attempts to connect to closed ports
-```
-
-#### Integration Status
-
-**Current State:**
-- ✅ VPC Flow Logs actively collecting network traffic metadata
-- ✅ Logs stored in S3 with zero trust IAM role
-- ✅ 10-minute aggregation providing detailed visibility
-
-**Future Enhancement (Phase 2):**
-- Ingest VPC Flow Logs into Wazuh SIEM
-- Create custom rules for network anomaly detection
-- Correlate network traffic with CloudTrail API calls
+These trade-offs are appropriate for a demonstration environment. The architecture shows I understand the principles and can articulate what production would require.
 
 ---
 
-### Phase 1 Outcomes
-
-#### Security Posture Improvements
-
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| **Network Segmentation** | Flat network | Microsegmented VPC | 100% |
-| **Firewall Rules** | Overly permissive | Least-privilege | 85% reduction in attack surface |
-| **API Visibility** | None | 100% via CloudTrail | Complete audit trail |
-| **Network Visibility** | None | 100% via Flow Logs | Full traffic metadata |
-| **Admin Access** | SSH with keys | Session Manager | Eliminated SSH exposure |
-
-#### Compliance Achievements
-
-✅ **PCI DSS Requirements:**
-- 1.2.1: Network segmentation implemented
-- 1.3.4: Egress traffic restricted
-- 10.2: Audit trails for all users
-
-✅ **NIST Cybersecurity Framework:**
-- **Identify:** Asset inventory via VPC design
-- **Protect:** Security group microsegmentation
-- **Detect:** CloudTrail + VPC Flow Logs
-
-✅ **CIS AWS Foundations Benchmark:**
-- 2.1: CloudTrail enabled in all regions
-- 2.3: S3 bucket access logging enabled
-- 4.1: Security group restrictions implemented
-
-#### Attack Surface Reduction
-
-**Before Phase 1:**
-```
-Exposed Services:
-- SSH (22) - Internet facing
-- RDP (3389) - Potential exposure
-- All outbound traffic allowed
-- No audit logging
-- Flat network topology
-```
-
-**After Phase 1:**
-```
-Exposed Services:
-- HTTP/HTTPS only (80, 443)
-- No SSH/RDP public access
-- Explicit egress rules
-- Complete audit trail (CloudTrail)
-- Network monitoring (VPC Flow Logs)
-- Zero trust microsegmentation
-```
-
-**Result:** Attack surface reduced by approximately **80%**
-
----
-
-### Key Takeaways - Phase 1
-
-#### What Worked Well
-
-1. **Security Group References**
-   - Using `sg-web` instead of IP CIDRs made rules maintainable
-   - Prevented need to update rules when IPs changed
-   - Clear intent in rule names
-
-2. **Private Subnet for SIEM**
-   - Wazuh Manager isolated from direct internet exposure
-   - NAT gateway provided secure outbound access
-   - Reduced risk of SIEM compromise
-
-3. **Zero Trust IAM for VPC Flow Logs**
-   - Service-specific principals prevented over-permissive access
-   - Scoped to specific S3 bucket
-   - Example of good least-privilege implementation
-
-#### Challenges Overcome
-
-1. **VPC Flow Logs IAM Role**
-   - Initially used overly broad IAM role
-   - Refined to service-specific trust policy
-   - **Lesson:** Always use service principals, not wildcards
-
-2. **NAT Gateway Costs**
-   - $32/month fixed cost
-   - **Mitigation:** Necessary for private subnet internet access
-   - **Alternative considered:** VPC Endpoints (would reduce data transfer costs)
-
-3. **Security Group Planning**
-   - Initial rules too permissive
-   - **Solution:** Created spreadsheet mapping each communication flow
-   - **Result:** Documented justification for every rule
-
----
-
-## 📊 Phase 2: Centralized SIEM Monitoring
-
-[Coming next - continue building?]
-
----
