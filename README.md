@@ -129,8 +129,7 @@ I placed both the web server and Wazuh Manager in the same public subnet (10.0.0
 1. **Web Server** - Obviously needs to accept HTTP/HTTPS from the internet
 2. **Wazuh Manager** - Needs to be accessible by the web server agent, and I need dashboard access as the administrator.
 
-In a **production environment**, they should be in a private subnet without a direct internet access but  via NAT Gateway for updates or via **VPN, AWS Private Link or load balancer in a public subnet** for inbound traffic but for a demonstration environment, putting them in a public subnet with strict security group rules was a reasonable trade-off and
-avoids the cost of a NAT Gateway or Application Load Balancer.
+In a **production environment**, they should be in a private subnet without a direct internet access but  via **NAT Gateway** for secure updates, **AWS Private Link** for internal cloud services and **VPN or load balancer** for inbound traffic but for a demonstration environment, putting them in a public subnet with strict security group rules was a reasonable trade-off and avoids the cost of a NAT Gateway or Application Load Balancer.
 
 **The trade-off:**
 If someone compromises the web server, they're already in the same network segment as the Wazuh Manager. Security groups still protect it by providing instance-level isolation (only specific ports open, dashboard restricted to my IP), but there's less network-level isolation.
@@ -511,8 +510,9 @@ This follows least privilege - only the VPC Flow Logs service can
 - Creates audit trail for compliance and incident response
 
 **Where it falls short of enterprise production:**
-- Wazuh Manager should be in private subnet or behind VPN
-- Should use AWS PrivateLink to eliminate public internet traffic for AWS API calls
+- Wazuh Manager should be in private subnet or behind VPNS
+- Web Server should be in private subnet behind a load balancer
+- Should use AWS PrivateLink to eliminate public internet traffic for AWS API calls and NAT Gateways for updates
 - IAM policies could be more granular
 - Missing DDoS protection (AWS Shield Advanced)
 - Single points of failure (no high availability)
@@ -520,4 +520,207 @@ This follows least privilege - only the VPC Flow Logs service can
 These trade-offs are appropriate for a demonstration environment. The architecture shows I understand the principles and can articulate what production would require.
 
 ---
+
+## Phase 2: Centralized SIEM Monitoring
+
+### Objective
+
+Deploy Wazuh as a centralized Security Information and Event Management (SIEM) platform to aggregate, correlate, and analyze security events from multiple sources: host-based monitoring (file integrity, authentication logs) and cloud-based monitoring (AWS CloudTrail API activity and VPC Flow Logs).
+
+The goal was to create a single pane of glass for security visibility across both infrastructure and cloud layers.
+
+---
+
+### 2.1 Why Wazuh
+
+**Choosing a SIEM:**
+
+I needed a SIEM that could:
+- Monitor Linux hosts (file changes, login attempts, system events)
+- Ingest AWS CloudTrail logs from S3 and VPC Flow logs from CloudWatch logs
+- Run custom detection rules
+- Provide a web dashboard for visualization
+- Be free/open-source (budget constraint for demo)
+
+**Options I considered:**
+- **Splunk** - Powerful but expensive, requires license even for demo
+- **ELK Stack** - Flexible but requires building custom integrations
+- **Wazuh** - Open-source, built-in AWS integration, agent-based monitoring ✅
+
+Wazuh is essentially ELK (now OpenSearch) with security-focused pre-built features : agents, decoders, rules, and CloudTrail integration.
+
+---
+
+**All-in-One Installation:**
+
+Wazuh offers an "all-in-one" installation that puts Manager, Indexer, and Dashboard on a single instance. This is not recommended for production (should be separate instances for scale), but acceptable for demo purposes.
+
+### 2.3 Wazuh Manager Installation
+
+**Instance Specifications:**
+
+| Setting | Value | Justification |
+|---------|-------|---------------|
+| **Instance Type** | t3.large | 2 vCPU, 8GB RAM (minimum for Wazuh + OpenSearch) |
+| **OS** | Ubuntu 22.04 LTS | Wazuh official support |
+| **Disk** | 20GB gp3 | Initially 8GB, increased after disk full issues |
+| **Subnet** | Public (10.0.8.0/24) | As discussed in Phase 1 |
+| **Security Group** | sg-wazuh | Restricted access |
+
+**Installation:**
+
+![Wazuh Installation](screenshots/phase2/01-wazuh-installation.png)
+
+I used Wazuh's automated installation script:
+```bash
+# Download installation script
+curl -sO https://packages.wazuh.com/4.7/wazuh-install.sh
+
+# Run all-in-one installation
+sudo bash ./wazuh-install.sh -a
+```
+The script installs:
+1. Wazuh Manager (log processing engine)
+2. Wazuh Indexer (OpenSearch for storage)
+3. Wazuh Dashboard (web interface)
+4. Filebeat (log shipping)
+
+**First login:**
+
+![Wazuh Dashboard Login](screenshots/phase2/02-wazuh-dashboard-login.png)
+
+Accessed the dashboard at `https://10.0.8.30` (remember, I restricted this to my IP in the security group).
+
+### 2.4 Wazuh Agent Deployment
+
+**Target:** Web server (MyApp) in public subnet
+
+![Agent Deployment](screenshots/phase2/03-agent-deployment.png)
+
+**Installation on web server:**
+```bash
+# Download agent package
+curl -so wazuh-agent.deb https://packages.wazuh.com/4.x/apt/pool/main/w/wazuh-agent/wazuh-agent_4.7.5-1_amd64.deb
+# Install with manager IP
+sudo WAZUH_MANAGER='10.0.8.30' dpkg -i wazuh-agent.deb
+
+# Start agent
+sudo systemctl daemon-reload
+sudo systemctl enable wazuh-agent
+sudo systemctl start wazuh-agent
+```
+**Verification:**
+
+On the Wazuh Manager, check connected agents:
+```bash
+sudo /var/ossec/bin/agent_control -l
+```
+
+Output:
+```
+Wazuh agent_control. List of available agents:
+   ID: 001, Name: MyApp, IP: 10.0.1.5, Status: Active
+```
+
+**In the dashboard:**
+
+![Agent Active Status](screenshots/phase2/12-wazuh-agent-active.png)
+
+The agent shows as "Active" with last keep-alive timestamp. This confirms:
+- Network connectivity (ports 1514, 1515 working)
+- Agent was successfully enrolled
+- Manager is receiving events
+---
+
+### 2.5 File Integrity Monitoring (FIM)
+
+**What is FIM:**
+
+File Integrity Monitoring tracks changes to files and directories. If someone modifies critical system files or web content, FIM will detect it and generate an alert.
+
+**Why it matters:**
+
+Common attack pattern:
+### Attack Pattern 1: Web Defacement / Malware Distribution
+1. Attacker compromises a web server (via SQL injection, RCE, etc.)
+2. Modifies `/var/www/html/index.html` to serve malware or phishing content
+3. **FIM Detection:** Wazuh alerts on unauthorized changes to web root
+4. **Impact:** Visitors download malware, site reputation damaged, SEO poisoning
+
+### Attack Pattern 2: Backdoor User Creation
+1. Attacker gains root access (privilege escalation vulnerability)
+2. Modifies `/etc/passwd` or `/etc/shadow` to create backdoor user account
+3. **FIM Detection:** Wazuh alerts on critical system file modification
+4. **Impact:** Persistent access even after patching initial vulnerability
+
+### Attack Pattern 3: SSH Backdoor / Persistence
+1. Attacker escalates privileges on compromised system
+2. Modifies `/etc/ssh/sshd_config` to enable root login, add authorized keys, or disable logging
+3. **FIM Detection:** Wazuh alerts on SSH configuration changes
+4. **Impact:** Attacker maintains remote access, evades detection and uses system as pivot point
+
+FIM detects these changes in real-time.
+
+**Configuration:**
+
+Wazuh agent comes with default FIM configuration in `/var/ossec/etc/ossec.conf`
+
+**What gets monitored:**
+- File creation/deletion
+- Content changes (checksum)
+- Permission changes
+- Ownership changes
+
+**Testing FIM:**
+I modified the web server's index page,
+![FIM EEDUT](screenshots/phase2/12-wazuh-agent-active.png)
+
+**Result - Alert triggered:**
+
+![FIM Alert](screenshots/phase2/13-wazuh-fim-alert.png)
+
+**Alert details:**
+- **Rule ID:** 550 (File integrity checksum changed)
+- **Severity:** Level 7 (Medium)
+- **File:** `/var/www/html/index.html`
+- **Change type:** Content modification
+- **Timestamp:** Within 30 seconds of change
+- **Checksum:** MD5/SHA1 hash changed
+
+**This demonstrates detection of unauthorized file changes in real-time.**
+
+**Events overview:**
+
+![Security Events Dashboard](screenshots/phase2/15-wazuh-security-events.png)
+
+The dashboard shows all security events captured over 7 days:
+
+**Metrics:**
+- **480 total events**
+- **111 successful authentications** (SSH sessions via Session Manager)
+- **0 authentication failures** (no brute-force attempts detected)
+- **0 critical alerts (Level 12+)**
+
+**Event timeline:**
+![Security Events Grph](screenshots/phase2/15-wazuh-security-events.png)
+
+The graph shows activity spikes on Oct 17 (when I was actively working on the project). Normal baseline activity is much lower.
+
+**Host-based monitoring working:**
+
+The 480 events prove the agent is successfully forwarding logs from the web server to the Wazuh Manager for analysis.
+
+---
+
+### 2.7 CloudTrail Integration
+
+**Objective:** Ingest AWS CloudTrail logs from S3 into Wazuh to monitor AWS API activity in real-time.
+
+**Why this matters:**
+
+CloudTrail logs who did what in AWS (security group changes, IAM modifications, resource creation). Without SIEM integration, these logs sit in S3 and you'd have to manually search through them. Integrating with Wazuh enables:
+- Real-time alerts on suspicious API calls
+- Correlation with host events
+- Custom detection rules
+- Dashboard visibility
 
