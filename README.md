@@ -944,6 +944,35 @@ Alert triggered immediately showing:
 **I didn't test this** (didn't want to risk account lockout), but the logic follows standard Wazuh correlation patterns used in production SIEMs.
 
 ---
+
+#### MITRE ATT&CK Mapping Summary
+
+**All 6 custom rules mapped to MITRE framework:**
+
+| Rule ID | Rule Name | MITRE Technique | Tactic | Severity |
+|---------|-----------|-----------------|--------|----------|
+| 100010 | Security Group Changes | T1562.007 - Disable Cloud Firewall | Defense Evasion | 10 (High) |
+| 100012 | Failed Console Login | T1078 - Valid Accounts | Initial Access | 8 (Medium) |
+| 100013 | Brute Force | T1110 - Brute Force | Credential Access | 10 (High) |
+| 100014 | Root Account Usage | T1078.004 - Cloud Accounts | Initial Access | 12 (Critical) |
+| 100015 | S3 Made Public | T1530 - Data from Cloud Storage | Collection | 12 (Critical) |
+| 100016 | IAM Changes | T1098 - Account Manipulation | Persistence | 9 (High) |
+
+**MITRE ATT&CK tactics covered:**
+```
+Initial Access → Persistence → Defense Evasion → Credential Access → Collection
+   (100012)        (100016)        (100010)          (100013)        (100015)
+   (100014)
+```
+**Why MITRE mapping is important:**
+
+1. **Common language:** Other security professionals immediately understand the threat
+2. **Threat intelligence:** Can correlate with known attacker TTPs
+3. **Playbook mapping:** Each technique has response procedures
+4. **Maturity assessment:** Shows coverage across attack lifecycle
+5. **Communication:** Easily explain to executives ("We detect T1078.004")
+---
+
 #### Detection Timelines
 
 **How long from action to detection:**
@@ -1033,4 +1062,688 @@ Year 2-7: S3 Deep Glacier (archive, rarely accessed)
 **4. Automate via Infrastructure as Code**
 Makes deployments repeatable and documented.
 
+**5 Integrate Tuning process:**
+- Create rules → Generate alerts → Lots of noise
+- Add exclusions → Filter false positives → Less noise
+- Adjust severity → Prioritize critical alerts → Actionable
+- Document baseline → "Normal" behavior defined → Production-ready
 ---
+
+#### What This Phase Enables for Phase 3
+
+**Phase 2 creates detection → Phase 3 adds response:**
+```
+WITHOUT Phase 2 SIEM:
+Event occurs → Nobody knows → No response → Attacker wins
+
+WITH Phase 2 SIEM:
+Event occurs → Detected → Alert generated → Manual investigation → Manual response
+(Minutes to detect, Hours to respond)
+
+WITH Phase 2 + Phase 3 (SOAR):
+Event occurs → Detected → Alert generated → AUTOMATIC response → Threat contained
+(Minutes to detect, SECONDS to respond)
+```
+**Phase 2 detects threats.**  
+**Phase 3 stops threats.** 
+---
+
+## Phase 3: Automated Response & CSPM
+
+### Objective
+
+Transition from **detection** (Phase 2) to **automated response** - reducing Mean Time to Respond (MTTR) from hours/minutes to seconds. Implement Security Orchestration, Automation, and Response (SOAR) for threat containment and Cloud Security Posture Management (CSPM) for compliance enforcement.
+
+**Phase 2 detected threats. Phase 3 stops them automatically.**
+
+---
+### 3.1 SOAR: Automated Brute Force Protection
+
+#### The Threat: SIEM Dashboard Compromise
+
+**Scenario:**
+
+An attacker discovers the Wazuh dashboard is accessible at `https://<wazuh-manager-ip>`. They attempt to brute force the admin credentials.
+
+**Why this is critical:**
+
+If an attacker gains access to the SIEM dashboard, they can:
+- **Disable detection rules** - Turn off alerts for their activities
+- **Delete logs** - Cover their tracks by removing evidence
+- **View sensitive data** - See all security events, including credentials in logs
+- **Identify blind spots** - Learn what ISN'T monitored and exploit it
+- **Manipulate alerts** - Create false alerts to distract SOC team
+- **Pivot to infrastructure** - Dashboard has access to all monitored systems
+
+**Compromising the security monitoring system is a high-value target for attackers.**
+In enterprise breaches, attackers often target SIEM/logging infrastructure early to avoid detection.
+
+---
+#### Solution Architecture
+
+**Automated response workflow:**
+```
+Failed Dashboard Login (1) → Wazuh detects → Rule 100050 fires (Level 8)
+        ↓
+Failed Dashboard Login (2) → Wazuh correlates → Rule 100050 fires again
+        ↓
+Failed Dashboard Login (3) → Wazuh correlation engine → Rule 100051 fires (Level 12)
+        ↓
+wazuh-execd (active response daemon) → Sees 100051 alert → Executes firewall-block.sh
+        ↓
+Bash script adds iptables rule → Source IP blocked for 10 minutes → Attack contained
+        ↓
+Auto-timeout: After 10 minutes → wazuh-execd calls script with 'delete' → IP unblocked
+```
+
+#### Implementation Details
+
+**Challenge: Getting Wazuh to Recognize Dashboard Authentication Events**
+
+**Initial problem:**
+
+Wazuh was triggering the generic authentication rule (2501 - Level 6) for failed logins, but I needed to:
+1. Specifically identify Wazuh Dashboard authentication failures
+2. Count individual failures for correlation
+3. Trigger custom rule with higher severity
+
+**Solution: Custom decoder + Chained rules**
+
+---
+
+**Step 1: Create Custom Decoder**
+
+**Created decoder in `/var/ossec/etc/decoders/local_decoder.xml`:**
+
+![Custom Decoder](screenshots/phase3/01-custom-decoder.png)
+```xml
+
+  wazuh-dashboard
+  authentication failure from (\S+); user=(\S+)
+  srcip, user
+
+```
+**What this decoder does:**
+
+- **`<program_name>`** - Matches logs from "wazuh-dashboard" process
+- **`<regex>`** - Extracts source IP and username from log message
+- **`<order>`** - Maps regex capture groups to fields (srcip, user)
+
+**Example log line it parses:**
+```
+wazuh-dashboard: authentication failure from 203.0.113.50; user=admin
+```
+
+**Extracted fields:**
+- `srcip` = 203.0.113.50
+- `user` = admin
+
+**Why this matters:**
+Without the decoder, Wazuh sees the log but can't extract the source IP. The `<same_source_ip />` condition in Rule 100051 wouldn't work. The decoder makes the IP field available for correlation.
+
+---
+**Step 2: Create Custom Detection Rules**
+
+**Created rules in `/var/ossec/etc/rules/local_rules.xml`:**
+
+![SOAR Custom Rules](screenshots/phase3/02-soar-custom-rules.png)
+```xml
+
+
+
+  
+  
+    2501
+    wazuh-dashboard
+    Failed authentication attempt to Wazuh Dashboard
+    authentication_failed,pci_dss_10.2.4,pci_dss_10.2.5,
+100050
+    
+    Multiple failed authentication attempts to Wazuh Dashboard - Possible brute force attack
+    
+      T1110.001
+    
+    authentication_failures,pci_dss_10.2.4,pci_dss_10.2.5,
+  
+
+
+```
+**Rule architecture breakdown:**
+
+**Rule 100050 (Individual Failed Login):**
+```xml
+2501  
+wazuh-dashboard  
+7  
+```
+
+**Why depend on rule 2501?**
+
+Rule 2501 is Wazuh's built-in generic authentication failure rule. By using `<if_sid>2501</if_sid>`, I'm saying:
+
+"If rule 2501 fires (authentication failure) AND it's from wazuh-dashboard program, then also fire rule 100050"
+
+This is **rule inheritance** - building specific detection on top of generic patterns.
+
+**Why Level 7 instead of Level 8?**
+
+- Rule 2501 (generic) = Level 6
+- Rule 100050 (specific) = Level 7 (higher than parent, but still medium)
+- Rule 100051 (correlation) = Level 10 (high severity)
+
+This creates a severity escalation:
+```
+Generic auth failure (5) → Dashboard auth failure (7) → Brute force (10)
+```
+**How correlation works:**
+```
+Attempt 1: Rule 100050 fires → Wazuh remembers: srcip=203.0.113.50, count=1
+Attempt 2: Rule 100050 fires → Wazuh checks: same IP? Yes. Count=2
+Attempt 3: Rule 100050 fires → Wazuh checks: same IP? Yes. Count=3 → Triggers 100051!
+```
+
+Wazuh's correlation engine tracks:
+- How many times 100050 fired
+- From which source IP
+- Within the 2-minute timeframe
+
+When threshold is met (3 attempts, same IP, 2 minutes), Rule 100051 fires.
+
+**MITRE ATT&CK mapping:**
+
+- **T1110.001** - Brute Force: Password Guessing
+- **Tactic:** Credential Access
+- **Sub-technique:** Password guessing (vs. password spraying or credential stuffing)
+
+---
+
+**Step 3: Create Active Response Script**
+
+**Created `/var/ossec/active-response/bin/firewall-block.sh`:**
+
+![Firewall Block Script](screenshots/phase3/03-firewall-block-script.png)
+```bash
+#!/bin/bash
+# firewall-block.sh - Wazuh 4.x+ format with JSON input
+# Compatible with Wazuh 4.0+
+
+LOCAL=`dirname $0`
+cd $LOCAL
+cd ../
+PWD=`pwd`
+LOG="/var/ossec/logs/active-responses.log"
+
+# Logging function
+log() {
+    echo "$(date '+%Y/%m/%d %H:%M:%S') firewall-block: $1" >> ${LOG}
+}
+
+log "=== Script started ==="
+
+# Read JSON input from stdin
+read INPUT_JSON
+log "Received input: $INPUT_JSON"
+
+# Parse JSON - try jq first, fallback to grep/sed
+if command -v jq &> /dev/null; then
+    ACTION=$(echo "$INPUT_JSON" | jq -r '.command' 2>/dev/null)
+    SRCIP=$(echo "$INPUT_JSON" | jq -r '.parameters.alert.data.srcip' 2>/dev/null)
+    
+    # Fallback path structure
+    if [ -z "$SRCIP" ] || [ "$SRCIP" = "null" ]; then
+        SRCIP=$(echo "$INPUT_JSON" | jq -r '.alert.data.srcip' 2>/dev/null)
+    fi
+else
+    # Manual parsing without jq
+    ACTION=$(echo "$INPUT_JSON" | grep -o '"command":"[^"]*"' | cut -d'"' -f4)
+    SRCIP=$(echo "$INPUT_JSON" | grep -o '"srcip":"[^"]*"' | cut -d'"' -f4)
+    log "Parsing without jq: ACTION=$ACTION, SRCIP=$SRCIP"
+fi
+
+# Validate inputs
+if [ -z "$SRCIP" ] || [ "$SRCIP" = "null" ]; then
+    log "ERROR: No source IP found in input"
+    log "Input was: $INPUT_JSON"
+    exit 1
+fi
+
+if [ -z "$ACTION" ]; then
+    # Default to 'add' if no action specified
+    ACTION="add"
+    log "No action specified, defaulting to: add"
+fi
+
+log "Parsed - ACTION: $ACTION, SRCIP: $SRCIP"
+
+# Validate IP format
+if ! echo "$SRCIP" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then
+    log "ERROR: Invalid IP format: $SRCIP"
+    exit 1
+fi
+
+# Check if iptables exists
+if ! command -v iptables &> /dev/null; then
+    log "ERROR: iptables not found"
+    exit 1
+fi
+
+# Execute action
+case "$ACTION" in
+    add)
+        # Check if already blocked
+        if iptables -C INPUT -s "$SRCIP" -j DROP 2>/dev/null; then
+            log "IP $SRCIP is already blocked"
+         else
+            # Block the IP
+            iptables -I INPUT -s "$SRCIP" -j DROP 2>&1 | tee -a ${LOG}
+            if [ ${PIPESTATUS[0]} -eq 0 ]; then
+                log "SUCCESS: Blocked IP $SRCIP"
+            else
+                log "ERROR: Failed to block IP $SRCIP"
+                exit 1
+            fi
+        fi
+        ;;
+    delete)
+        # Check if blocked
+        if iptables -C INPUT -s "$SRCIP" -j DROP 2>/dev/null; then
+            # Unblock the IP
+            iptables -D INPUT -s "$SRCIP" -j DROP 2>&1 | tee -a ${LOG}
+            if [ ${PIPESTATUS[0]} -eq 0 ]; then
+                log "SUCCESS: Unblocked IP $SRCIP"
+             else
+                log "ERROR: Failed to unblock IP $SRCIP"
+                exit 1
+            fi
+        else
+            log "IP $SRCIP was not blocked"
+        fi
+        ;;
+    *)
+        log "ERROR: Unknown action: $ACTION"
+        exit 1
+        ;;
+esac
+
+log "=== Script completed ==="
+exit 0
+```
+
+**Script features and error handling:**
+
+**1. Robust JSON parsing:**
+```bash
+# Try jq first (proper JSON parser)
+if command -v jq &> /dev/null; then
+    ACTION=$(echo "$INPUT_JSON" | jq -r '.command')
+    SRCIP=$(echo "$INPUT_JSON" | jq -r '.parameters.alert.data.srcip')
+    
+    # Try alternate JSON path if first fails
+    if [ -z "$SRCIP" ] || [ "$SRCIP" = "null" ]; then
+        SRCIP=$(echo "$INPUT_JSON" | jq -r '.alert.data.srcip')
+    fi
+else
+    # Fallback to grep/sed if jq not installed
+    ACTION=$(echo "$INPUT_JSON" | grep -o '"command":"[^"]*"' | cut -d'"' -f4)
+    SRCIP=$(echo "$INPUT_JSON" | grep -o '"srcip":"[^"]*"' | cut -d'"' -f4)
+fi
+```
+**Why two parsing methods?**
+
+- **jq** is the proper way to parse JSON (reliable, handles edge cases)
+- **grep/sed** is a fallback if jq isn't installed (less robust but works)
+
+**Why try two JSON paths?**
+
+Wazuh's JSON structure changed between versions. Different versions put `srcip` in different locations:
+- Wazuh 4.0-4.3: `.parameters.alert.data.srcip`
+- Wazuh 4.4+: `.alert.data.srcip`
+
+My script tries both to ensure compatibility.
+
+---
+
+**2. Input validation:**
+```bash
+# Validate IP was extracted
+if [ -z "$SRCIP" ] || [ "$SRCIP" = "null" ]; then
+    log "ERROR: No source IP found in input"
+    exit 1
+fi
+
+# Validate IP format (prevent command injection)
+if ! echo "$SRCIP" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then
+    log "ERROR: Invalid IP format: $SRCIP"
+    exit 1
+fi
+```
+
+**Why validate IP format?**
+
+Security: Prevents command injection. If an attacker could somehow inject malicious data into the `srcip` field, the regex validation stops it from reaching iptables.
+Example attack (prevented):
+```bash
+SRCIP="1.2.3.4; rm -rf /"  # Would fail regex validation
+```
+
+---
+
+**3. Idempotency (safe to run multiple times):**
+```bash
+# Before blocking, check if already blocked
+if iptables -C INPUT -s "$SRCIP" -j DROP 2>/dev/null; then
+    log "IP $SRCIP is already blocked"
+else
+    # Block the IP
+    iptables -I INPUT -s "$SRCIP" -j DROP
+fi
+```
+
+**Why check first?**
+
+If the script is called multiple times for the same IP (shouldn't happen, but could), it won't error trying to add duplicate iptables rules.
+
+---
+**4. Comprehensive logging:**
+```bash
+log() {
+    echo "$(date '+%Y/%m/%d %H:%M:%S') firewall-block: $1" >> ${LOG}
+}
+
+log "=== Script started ==="
+log "Received input: $INPUT_JSON"
+log "Parsed - ACTION: $ACTION, SRCIP: $SRCIP"
+log "SUCCESS: Blocked IP $SRCIP"
+log "=== Script completed ==="
+```
+
+**Every action is logged for:**
+- Debugging (if something goes wrong)
+- Audit trail (who was blocked, when, why)
+- Compliance (PCI DSS requires logging of security actions)
+
+---
+**5. Graceful error handling:**
+```bash
+if [ ${PIPESTATUS[0]} -eq 0 ]; then
+    log "SUCCESS: Blocked IP $SRCIP"
+else
+    log "ERROR: Failed to block IP $SRCIP"
+    exit 1
+fi
+```
+
+**If iptables command fails:**
+- Logs the error
+- Exits with code 1 (Wazuh sees failure)
+- Doesn't claim success when it failed
+
+---
+**Make script executable:**
+```bash
+sudo chmod 750 /var/ossec/active-response/bin/firewall-block.sh
+sudo chown root:wazuh /var/ossec/active-response/bin/firewall-block.sh
+```
+
+**Install jq (JSON parser):**
+```bash
+sudo apt update && sudo apt install -y jq
+```
+
+---
+**Step 4: Configure Active Response**
+
+**In `/var/ossec/etc/ossec.conf`:**
+
+![Active Response Configuration](screenshots/phase3/04-active-response-config.png)
+```xml
+
+
+  
+  
+    firewall-block
+    firewall-block.sh
+    yes
+  
+
+  
+  
+    no
+    firewall-block
+    server
+    100051
+    600
+  
+
+
+```
+
+**Configuration breakdown:**
+
+**`<command>` section:**
+```xml
+firewall-block  
+firewall-block.sh  <!-- Script in active-response/bin/ -->
+yes  
+```
+**`<active-response>` section:**
+```xml
+no  
+firewall-block  
+server  
+100051  
+600  
+```
+
+**Why `<location>server`?**
+
+- **`server`** = Execute on Wazuh Manager (where dashboard runs)
+- **`local`** = Execute on the agent that generated the alert
+- **`all`** = Execute on both manager and agent
+
+Since the dashboard is ON the Wazuh Manager, I blocked the IP on the manager itself, not on a remote agent.
+
+**Why 10-minute timeout?**
+Balance between security and usability:
+- **Too short (1-2 min):** Attacker can retry immediately
+- **Too long (permanent):** Legitimate user who typo'd 3 times is locked out forever
+- **10 minutes:** Long enough to stop automated attacks, short enough to allow recovery
+
+**Production would use graduated response:**
+- 1st offense: 10 minutes
+- 2nd offense (within 24 hours): 1 hour
+- 3rd offense: 24 hours
+- 4th offense: Permanent + manual review required
+- 
+**Restart Wazuh to apply configuration:**
+
+---
+#### Testing the SOAR Automation
+
+**I tested the SOAR automation using two methods:**
+
+1. **Dashboard login attempts** (real attack simulation)
+2. **Command-line log injection** (controlled testing with fake IP)
+
+---
+
+**Method 1: Real Dashboard Login Attempts**
+
+**Attempted via web browser:**
+```
+https://<wazuh-manager-ip> → Login with wrong password 3 times
+```
+
+**Challenge encountered:**
+
+![Dashboard Login Attempts](screenshots/phase3/05a-dashboard-login-attempts.png)
+```
+[2025-10-23T09:50:00] [WARN] [o.o.s.a.BackendRegistry] [node-1] Authentication finally failed for admin from 127.0.0.1:60876
+[2025-10-23T09:50:04] [WARN] [o.o.s.a.BackendRegistry] [node-1] Authentication finally failed for admin from 127.0.0.1:60876
+[2025-10-23T09:50:07] [WARN] [o.o.s.a.BackendRegistry] [node-1] Authentication finally failed for admin from 127.0.0.1:60876
+```
+**Issue: All-in-one Wazuh logs authentication from localhost (127.0.0.1)**
+
+**Why this happened:**
+
+In an all-in-one Wazuh installation:
+- Dashboard runs on the same server as the Manager
+- Authentication requests come from `localhost` (127.0.0.1)
+- NOT from the actual client IP making the request
+
+**This is an architecture limitation, not a detection failure.**
+
+**In production with separate components:**
+```
+User (203.0.113.50) → Load Balancer → Wazuh Dashboard (10.0.8.30) → 
+Wazuh Manager (10.0.8.50) sees IP: 203.0.113.50 ✅
+```
+**In my all-in-one demo:**
+```
+User (203.0.113.50) → Wazuh Dashboard+Manager (same host) → 
+Logs show: 127.0.0.1 (localhost) ❌
+```
+
+**Why blocking localhost would be catastrophic:**
+
+If active response blocked 127.0.0.1:
+- Manager couldn't talk to its own indexer
+- Dashboard couldn't query the API
+- **Entire SIEM would break** ❌
+
+**Mitigation:** Localhost was whitelisted by default (production best practice)
+**This is correct behavior** - you NEVER want to block localhost or internal management IPs.
+
+---
+
+**Method 2: Command-Line Simulation (Controlled Testing)**
+
+**To properly test the detection and response logic, I simulated authentication failures with a fake external IP:**
+
+![Simulating Brute Force](screenshots/phase3/05b-simulate-brute-force.png)
+
+**Test script:**
+```bash
+FAKE_IP="203.0.113.50"
+
+for i in 1 2 3 4; do
+  echo "$(date +'%b %d %H:%M:%S') $(hostname) wazuh-dashboard: authentication failure from $FAKE_IP; user=admin" | sudo tee -a /var/log/auth.log
+  sleep 4
+done
+```
+**What this does:**
+
+1. Creates authentication failure log entries
+2. Uses a fake external IP (203.0.113.50) to simulate real attacker
+3. Writes to `/var/log/auth.log` (where Wazuh agent monitors)
+4. Triggers the same detection rules as real attacks
+
+**Log entries created:**
+```
+Oct 23 10:41:40 ip-10-0-8-30 wazuh-dashboard: authentication failure from 203.0.113.50; user=admin
+Oct 23 10:41:44 ip-10-0-8-30 wazuh-dashboard: authentication failure from 203.0.113.50; user=admin
+Oct 23 10:41:48 ip-10-0-8-30 wazuh-dashboard: authentication failure from 203.0.113.50; user=admin
+Oct 23 10:41:52 ip-10-0-8-30 wazuh-dashboard: authentication failure from 203.0.113.50; user=admin
+```
+
+---
+**Detection and Response Results:**
+
+**Wazuh alerts triggered:**
+
+![Rules Fired Successfully](screenshots/phase3/06-rules-fired.png)
+```bash
+sudo tail -f /var/ossec/logs/alerts/alerts.log | grep --color=auto -E "100050|100051"
+```
+
+Output:
+```
+Rule: 100050 (level 7) -> 'Failed authentication attempt to Wazuh Dashboard'
+Rule: 100050 (level 7) -> 'Failed authentication attempt to Wazuh Dashboard'
+Rule: 100051 (level 10) -> 'Multiple failed authentication attempts to Wazuh Dashboard - Possible brute force attack'
+```
+**Rules fired in sequence:**
+1. First failure → Rule 100050 (Level 7)
+2. Second failure → Rule 100050 (Level 7)
+3. Third failure → Rule 100051 (Level 10) ✅
+
+---
+
+**Active response execution:**
+
+![Active Response Log](screenshots/phase3/07-active-response-execution.png)
+```bash
+sudo tail -n0 -f /var/ossec/logs/active-responses.log
+```
+Output:
+```
+2025/10/23 10:41:50 firewall-block: === Script started ===
+2025/10/23 10:41:50 firewall-block: Received input: {"version":1,"origin":{"name":"node01","module":"wazuh-execd"},"command":"add","parameters":{"extra_args":[],"alert":{"timestamp":"2025-10-23T10:41:50.711+0000","rule":{"level":10,"description":"Multiple failed authentication attempts to Wazuh Dashboard - Possible brute force attack","id":"100051"},"mitre":{"id":["T1110.001"],"tactic":["Credential Access"],"technique":["Password Guessing"]},"frequency":3,"firetimes":4,"mail":false,"groups":["authentication","wazuh","authentication_failures"],"pci_dss":["10.2.4","10.2.5"],"agent":{"id":"000","name":"ip-10-0-8-30"},"manager":{"name":"ip-10-0-8-30"},"id":"1761216110.3956585","previous_output":"Oct 23 10:41:44 ip-10-0-8-30 wazuh-dashboard: authentication failure from 203.0.113.50; user=admin\nOct 23 10:41:40 ip-10-0-8-30 wazuh-dashboard: authentication failure from 203.0.113.50; user=admin","full_log":"Oct 23 10:41:48 ip-10-0-8-30 wazuh-dashboard: authentication failure from 203.0.113.50; user=admin","predecoder":{"program_name":"wazuh-dashboard","timestamp":"Oct 23 10:41:48","hostname":"ip-10-0-8-30"},"decoder":{"name":"wazuh-dashboard-auth"},"data":{"srcip":"203.0.113.50","dstuser":"admin"},"location":"/var/log/auth.log"},"program":"active-response/bin/firewall-block.sh"}}
+2025/10/23 10:41:50 firewall-block: Parsed - ACTION: add, SRCIP: 203.0.113.50
+2025/10/23 10:41:50 firewall-block: SUCCESS: Blocked IP 203.0.113.50
+2025/10/23 10:41:50 firewall-block: === Script completed ===
+```
+
+**Key observations from the log:**
+
+✅ **JSON input received** - wazuh-execd passed complete alert details  
+✅ **Custom decoder worked** - `"decoder":{"name":"wazuh-dashboard-auth"}`  
+✅ **Source IP extracted** - `"data":{"srcip":"203.0.113.50"}`  
+✅ **Script parsed correctly** - `ACTION: add, SRCIP: 203.0.113.50`  
+✅ **iptables succeeded** - `SUCCESS: Blocked IP 203.0.113.50`  
+
+**The entire automation chain worked as expected** ✅
+---
+
+**Verify IP blocked in firewall:**
+
+![IP Blocked in iptables](screenshots/phase3/08-iptables-blocked.png)
+```bash
+sudo iptables -L INPUT -v -n
+```
+
+Output:
+```
+Chain INPUT (policy ACCEPT 129K packets, 35M bytes)
+pkts bytes target     prot opt in     out     source               destination
+   0     0 DROP       0    --  *      *       203.0.113.50         0.0.0.0/0
+```
+
+**iptables rule successfully added:**
+- Target: DROP
+- Source: 203.0.113.50
+- Destination: Any (0.0.0.0/0)
+- **All packets from this IP are now dropped** ✅
+
+**Complete network isolation achieved.** ✅
+
+---
+**Auto-unblock after 10 minutes:**
+**Verified IP was unblocked:**
+```bash
+sudo iptables -L INPUT -n | grep 203.0.113.50
+# No output - rule removed ✅
+```
+
+**Automatic timeout worked perfectly.** The IP can access the system again after 10 minutes.
+
+---
+
+#### What This Proves
+
+**I Succesfully Demonstrated these:**
+
+✅ **Custom decoder** - Correctly parsed authentication failures and extracted source IP  
+✅ **Rule chaining** - Rule 100050 → Rule 100051 correlation worked  
+✅ **Frequency detection** - 3 attempts in 120 seconds triggered correctly  
+✅ **Active response integration** - wazuh-execd called script automatically  
+✅ **Script execution** - Bash script parsed JSON and executed iptables  
+✅ **IP blocking** - Firewall rule added successfully  
+✅ **Timeout mechanism** - Automatic unblock after 10 minutes
+
+**SOAR automation fully functional!** ✅
+
+---
+
+
+
