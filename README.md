@@ -704,7 +704,7 @@ The dashboard shows all security events captured over 7 days:
 **Event timeline:**
 ![Security Events Grph](screenshots/phase2/15-wazuh-security-events.png)
 
-The graph shows activity spikes on Oct 17 (when I was actively working on the project). Normal baseline activity is much lower.
+The graph shows activity spikes on Oct 17 (when I was actively working on the project). Normal baseline activity is usually much lower.
 
 **Host-based monitoring working:**
 
@@ -712,15 +712,325 @@ The 480 events prove the agent is successfully forwarding logs from the web serv
 
 ---
 
-### 2.7 CloudTrail Integration
+### 2.7 AWS Logs Integration (CloudTrail + VPC Flow Logs)
 
-**Objective:** Ingest AWS CloudTrail logs from S3 into Wazuh to monitor AWS API activity in real-time.
+**Objective:** To ingest AWS security logs from multiple sources into Wazuh for comprehensive visibility on cloud activities- both API-level actions (CloudTrail) and network-level traffic (VPC Flow Logs).
 
-**Why this matters:**
+**Why both sources matter:**
+These two log sources provide complementary visibility:
 
-CloudTrail logs who did what in AWS (security group changes, IAM modifications, resource creation). Without SIEM integration, these logs sit in S3 and you'd have to manually search through them. Integrating with Wazuh enables:
-- Real-time alerts on suspicious API calls
-- Correlation with host events
-- Custom detection rules
-- Dashboard visibility
+| Log Source | What It Captures | Use Case |
+|------------|------------------|----------|
+| **CloudTrail** | WHO did WHAT at the API level | IAM changes, security group modifications, resource creation |
+| **VPC Flow Logs** | WHAT connected to WHAT at the network level | Port scanning, data exfiltration, lateral movement |
 
+**Example scenario:**
+
+Attacker compromises IAM credentials:
+1. **CloudTrail shows:** User "admin" modified security group (API call)
+2. **VPC Flow Logs show:** External IP now connecting to previously blocked port (network traffic)
+
+Together, they tell the complete story of the attack.
+
+---
+#### Architecture Decision: Integration Methods
+
+**I used two different integration methods:**
+
+**CloudTrail → S3 → Wazuh**
+```
+CloudTrail writes to S3 → Wazuh polls S3 every 10 min → Events ingested
+```
+
+**VPC Flow Logs → CloudWatch → Wazuh**
+```
+Flow Logs write to CloudWatch → Wazuh subscribes to log stream → Events ingested
+```
+#### Wazuh Integration Configuration
+
+**Single configuration for both sources in `/var/ossec/etc/ossec.conf`:**
+```xml
+```
+**IAM permissions required:**
+
+Remember from Phase 1, the Wazuh Manager IAM role has:
+- `AmazonS3ReadOnlyAccess` - For CloudTrail bucket access
+- `CloudWatchLogsReadOnlyAccess` - For VPC Flow Logs access
+
+The IAM role provides credentials automatically (no access keys needed).
+
+#### Verification and Troubleshooting
+
+**Check integration status:**
+```bash
+sudo tail -f /var/ossec/logs/ossec.log | grep -i aws
+```
+**Initial issue encountered:**
+**Issue: CloudWatch permissions**
+
+Initially, I hadn't attached `CloudWatchLogsReadOnlyAccess` to the Wazuh Manager IAM role.
+
+**Symptoms:**
+```
+ERROR: Unable to describe log streams
+```
+
+**Solution:** 
+1. AWS Console → IAM → Roles → WazuhManagerRole
+2. Attach policy: `CloudWatchLogsReadOnlyAccess`
+3. Wait 30 seconds for role propagation
+4. Restart Wazuh
+
+**Lesson:** I need to always verify IAM permissions before troubleshooting Wazuh configuration.
+
+#### AWS Logs in Wazuh Dashboard
+
+**After both integrations started working:**
+
+![AWS Logs in Wazuh](screenshots/phase2/19-aws-logs-dashboard.png)
+
+**Events visible in dashboard:**
+
+| Event Name | Service | Description | My Action |
+|------------|---------|-------------|-----------|
+| CreatePolicy | iam.amazonaws.com | IAM policy creation | Creating WazuhManagerRole permissions |
+| AttachRolePolicy | iam.amazonaws.com | Permissions added to role | Attaching S3ReadOnly to role |
+| CreateRole | iam.amazonaws.com | New IAM role created | Creating VPC Flow Logs IAM role |
+| AuthorizeSecurityGroupIngress | ec2.amazonaws.com | Firewall rule added | Testing security group detection |
+| StartInstances | ec2.amazonaws.com | EC2 instance started | Restarting web server |
+| PutBucketPolicy | s3.amazonaws.com | S3 permissions changed | Configuring CloudTrail bucket |
+| ConsoleLogin | signin.amazonaws.com | AWS Console login | Me logging in |
+
+#### Event Details and Context
+
+**Clicking on a CloudTrail event shows full JSON:**
+
+![CloudTrail Event Detail](screenshots/phase2/20-cloudtrail-event-detail.png)
+
+**This level of detail enables:**
+- **Incident investigation:** Who made the change and why
+- **Compliance auditing:** Proof of who accessed what
+- **Threat hunting:** Correlation with other suspicious activity
+- **Forensics:** Complete reconstruction of events
+
+---
+
+### 2.8 Custom Detection Rules
+
+**Now that AWS logs are flowing into Wazuh, I created custom rules to detect cloud-specific threats.**
+
+**Why custom rules:**
+Wazuh has thousands of built-in rules for generic events (failed logins, file changes), but AWS-specific threats require custom detection logic:
+- Security group modifications
+- Root account usage
+- S3 buckets made public
+- IAM privilege escalation
+
+**Rules created:** 6 custom rules mapped to **MITRE ATT&CK framework**
+
+#### Rule Creation Process
+
+**Created `/var/ossec/etc/rules/local_rules.xml`:**
+
+![Custom Rules File](screenshots/phase2/21-custom-rules-file.png)
+```xml
+```
+
+#### Rule Breakdown and Testing
+
+**Rule 100010 - Security Group Modifications:**
+
+**Logic:**
+```xml
+80202  
+AuthorizeSecurityGroupIngress
+```
+
+**Triggers when:** Someone adds/removes security group rules
+
+**Why critical:** Security groups are cloud firewalls. Unauthorized changes could:
+- Expose infrastructure (0.0.0.0/0 on SSH)
+- Block legitimate traffic (remove required rules)
+- Create backdoors
+
+**MITRE ATT&CK:** T1562.007 - Disable or Modify Cloud Firewall  
+**Severity:** Level 10 (High)
+
+**Testing:**
+```
+AWS Console → EC2 → Security Groups → WebServer-SG
+Edit inbound rules → Add: SSH (22) from 0.0.0.0/0 → Save
+```
+Alert triggered (after 15-20 min delay) showing:
+- **Event:** AuthorizeSecurityGroupIngress
+- **User:** admin (me)
+- **Security Group:** sg-web
+- **Rule added:** SSH 0.0.0.0/0
+- **Source IP:** 41.203.x.x (Lagos)
+
+**In production:** This alert would trigger immediate investigation:
+- Is this authorized change?
+- Who approved it?
+- Does it violate policy?
+- Should it be reverted?
+
+I remediated immediately by removing the SSH rule.
+
+---
+
+**Rule 100014 - Root Account Usage:**
+
+**Logic:**
+```xml
+^Root$
+```
+
+**Triggers when:** AWS root account is used
+
+**Why critical:** AWS best practice = NEVER use root for daily operations. Root has:
+- Unlimited permissions (can't be restricted)
+- Can close account
+- Can change billing
+- Can modify organization settings
+
+**MITRE ATT&CK:** T1078.004 - Cloud Accounts  
+**Severity:** Level 12 (Critical)
+
+**Usage can indicate**:
+- Policy violation (employee using root inappropriately)
+- Compromised credentials (attacker got root password)
+- Emergency situation (should be documented)
+
+**Testing:**
+
+Logged out of AWS Console, logged back in as root user
+
+Alert triggered immediately showing:
+- **User type:** Root
+- **Event:** ConsoleLogin
+- **Source IP:** My IP
+- **Timestamp:** Login time
+
+**This would be a critical incident in production:**
+- Page on-call engineer immediately
+- Investigate: Who? Why? Authorized?
+- Review all actions taken with root
+- Consider rotating root credentials
+- Document justification if legitimate
+---
+
+**Rule 100013 - Brute Force Detection:**
+
+**Logic:**
+```xml
+100012  
+3  
+300  
+  
+```
+
+**Triggers when:** 3+ failed console logins from same IP within 5 minutes
+
+**Why it matters:** Signature of password guessing attack
+
+**MITRE ATT&CK:** T1110 - Brute Force  
+**Severity:** Level 10 (High)
+**Rule chaining:**
+1. Rule 100012 detects EACH failed login (Level 8)
+2. Rule 100013 correlates multiple failures (Level 10)
+
+**This demonstrates Wazuh's correlation engine** - connecting events over time.
+
+**I didn't test this** (didn't want to risk account lockout), but the logic follows standard Wazuh correlation patterns used in production SIEMs.
+
+---
+#### Detection Timelines
+
+**How long from action to detection:**
+
+**CloudTrail detection timeline:**
+```
+Action → CloudTrail buffer (5-10 min) → S3 write (5-10 min) → 
+Wazuh polls (0-10 min) → Processing (1-2 min) → Alert
+
+Total: 15-30 minutes
+```
+
+**VPC Flow Logs detection timeline:**
+```
+Connection → Flow aggregation (10 min) → CloudWatch write (1 min) → 
+Wazuh subscribes (real-time) → Processing (1 min) → Alert
+
+Total: 10-15 minutes
+```
+**Host logs (for comparison):**
+```
+Event → Agent captures (real-time) → Send to manager (seconds) → 
+Processing (seconds) → Alert
+
+Total: 30 seconds
+```
+
+**What this means:**
+
+- **CloudTrail:** Good for investigations, not immediate response
+- **VPC Flow Logs:** Slightly faster, good for network monitoring
+- **Host logs:** True real-time, best for immediate threats
+- **EventBridge (Phase 3):** Near real-time for critical CloudTrail events
+---
+#### What This Integration Achieves
+
+**Before AWS log integration:**
+```
+CloudTrail: Logs in S3, never looked at
+Flow Logs: Not configured
+Visibility: API activity = none, Network = none
+Investigation: Manual S3 download and JSON parsing
+Alerting: None
+```
+
+**After AWS log integration:**
+```
+CloudTrail: Ingested, analyzed, alertable (15-20 min)
+Flow Logs: Visible in dashboard (10-15 min)
+Visibility: API activity = complete, Network = complete
+Investigation: Dashboard search with filters
+Alerting: Custom rules (Phase 2.8)
+```
+**Security capabilities now possible:**
+
+✅ **Detect unauthorized infrastructure changes** (security groups, IAM)  
+✅ **Identify reconnaissance activity** (port scans, failed connections)  
+✅ **Discover lateral movement** (unexpected internal connections)  
+✅ **Investigate incidents** (complete audit trail with context)  
+✅ **Prove compliance** (all actions logged and searchable)  
+✅ **Correlate across layers** (API + network + host events)  
+
+---
+
+#### Production Recommendations
+
+**For a real SOC deployment:**
+
+**1. Implement log filtering**
+- VPC Flow Logs: Only REJECT events initially
+- CloudTrail: Focus on write events (read events create noise)
+- Add more as team matures
+
+**2. Set up lifecycle policies**
+```
+Day 1-30: SIEM (hot storage, fast queries)
+Day 31-90: S3 Standard (warm storage, slower queries)
+Day 91-365: S3 Glacier (cold storage, for compliance)
+Year 2-7: S3 Deep Glacier (archive, rarely accessed)
+```
+
+**3. Monitor integration health**
+- Alert if no CloudTrail events for 30 minutes
+- Alert if no Flow Logs for 15 minutes
+- Dashboard showing "last event received" timestamps
+  
+**4. Automate via Infrastructure as Code**
+Makes deployments repeatable and documented.
+
+---
