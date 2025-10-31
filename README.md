@@ -1,4 +1,4 @@
-# Cloud-Native Security Architecture with SIEM, SOAR, CSPM & Incident Response Exercise
+# Cloud-Native Security Architecture with IAM, SIEM, SOAR, CSPM & Incident Response Exercise
 
 [![AWS](https://img.shields.io/badge/AWS-Cloud-orange?style=flat&logo=amazon-aws)](https://aws.amazon.com/)
 [![Wazuh](https://img.shields.io/badge/Wazuh-4.7.5-blue?style=flat&logo=wazuh)](https://wazuh.com/)
@@ -20,7 +20,7 @@ I integrated:
  
  -**Cloud Security Posture Management (CSPM)** for continuous compliance monitoring (using **AWS Config/EventBus/Python/Boto3 Lambda function**).
  
--I **validated** the impementation through a documented **Incident Response Exercise**, where a high-risk security policy violation was simulated, detected and automatically remediated.
+-I **validated** the impementation through a documented **Incident Response Exercise**, where I simulated an attack (**Red Team**), detected and remediated it (**Blue Team**)
 
 ### 🎯Why This Project Matters
 
