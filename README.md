@@ -162,17 +162,18 @@ This is **defense in depth** - multiple layers have to fail before data is compr
 Security groups act as stateful firewalls controlling traffic at the instance level. I configured three security groups with very specific rules following the principle of least privilege.
 
 #### Web Server Security Group
-![Web Server Security Group](Screenshots/phase1/02-security-groups-web-inbound.png)
-
 **Inbound Rules:**
+![Web Server Security Group](Screenshots/phase1/02-security-groups-web-inbound.png)
+*Figure 1.2:*
 
 | Type | Protocol | Port | Source | Justification |
 |------|----------|------|--------|---------------|
 | HTTP | TCP | 80 | 0.0.0.0/0 | Public website access |
 | HTTPS | TCP | 443 | 0.0.0.0/0 | Secure public website access |
 
-![Web Server Security Group](Screenshots/phase1/03-security-groups-web-outbound.png)
 **Outbound Rules:**
+![Web Server Security Group](Screenshots/phase1/03-security-groups-web-outbound.png)
+*Figure 1.3:*
 
 | Type | Protocol | Port | Destination | Justification |
 |------|----------|------|-------------|---------------|
@@ -195,10 +196,9 @@ Notice the outbound rules to Wazuh and the database use **security group referen
 There's no SSH (port 22) rule. Instead, I use AWS Systems Manager Session Manager (configured via IAM role) for administrative access. This eliminates the need to expose SSH and manage SSH keys, which are common attack vectors.
 
 #### Wazuh Manager Security Group
-
-![Wazuh Manager Security Group](screenshots/phase1/03-security-groups-wazuh.png)
-
 **Inbound Rules:**
+![Wazuh Manager Security Group](screenshots/phase1/03-security-groups-wazuh.png)
+*Figure 1.3:*
 
 | Type | Protocol | Port | Source | Justification |
 |------|----------|------|--------|---------------|
