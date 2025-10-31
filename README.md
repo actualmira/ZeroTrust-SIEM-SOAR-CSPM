@@ -544,7 +544,6 @@ I needed a SIEM that could:
 
 **Options I considered:**
 - **Splunk** - Powerful but expensive, requires license even for demo
-- **ELK Stack** - Flexible but requires building custom integrations
 - **Wazuh** - Open-source, built-in AWS integration, agent-based monitoring ✅
 
 Wazuh is essentially ELK (now OpenSearch) with security-focused pre-built features : agents, decoders, rules, and CloudTrail integration.
@@ -1233,9 +1232,9 @@ This is **rule inheritance** - building specific detection on top of generic pat
 
 This creates a severity escalation:
 ```
-Generic auth failure (5) → Dashboard auth failure (7) → Brute force (10)
+Generic auth failure (6) → Dashboard auth failure (7) → Brute force (10)
 ```
-**How correlation works:**
+**How correlation works:**s
 ```
 Attempt 1: Rule 100050 fires → Wazuh remembers: srcip=203.0.113.50, count=1
 Attempt 2: Rule 100050 fires → Wazuh checks: same IP? Yes. Count=2
