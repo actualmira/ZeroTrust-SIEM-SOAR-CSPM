@@ -117,7 +117,7 @@ I created a VPC with four subnets across two availability zones, strategically s
 - Private Subnet 1 (us-east-1a): 10.0.128.0/20 (Database - Primary)
 - Private Subnet 2 (us-east-1b): 10.0.144.0/20 (Database - Standby/Read Replica)
 ```
-![VPC Architecture](screenshots/phase1/01-vpc-architecture.png)
+![VPC Architecture](Screenshots/phase1/01-vpc-architecture.png)
 *Figure 1.1: VPC topology showing public and private subnet separation with controlled internet access*
 
 #### Subnet Strategy
