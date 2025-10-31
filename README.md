@@ -162,7 +162,7 @@ This is **defense in depth** - multiple layers have to fail before data is compr
 Security groups act as stateful firewalls controlling traffic at the instance level. I configured three security groups with very specific rules following the principle of least privilege.
 
 #### Web Server Security Group
-![Web Server Security Group](screenshots/phase1/02-security-groups-web.png)
+![Web Server Security Group](screenshots/phase1/02-security-groups-web-inbound.png)
 
 **Inbound Rules:**
 
