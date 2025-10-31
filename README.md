@@ -1746,4 +1746,158 @@ sudo iptables -L INPUT -n | grep 203.0.113.50
 ---
 
 
+### 3.2 CSPM: Automated S3 Compliance Enforcement
+
+#### The Compliance Problem
+
+**While Phase 3.1 protected the SIEM itself, Phase 3.2 tackles a different problem: cloud misconfigurations.**
+
+**Scenario:**
+
+A developer accidentally disables S3 Block Public Access while troubleshooting. Or worse - an attacker with compromised credentials intentionally exposes buckets to exfiltrate data. Either way, sensitive information is now accessible to anyone on the internet.
+
+**Why this is a big deal:**
+
+The 2019 Capital One breach exposed 100 million customer records because of a misconfigured firewall. The issue? It went undetected for months. Manual security audits are too slow - by the time you find the problem, the damage is done.
+
+**Industry standard:** NSA/CISA guidelines recommend "continuous monitoring and automated remediation" for cloud security. Not quarterly audits. Not manual checks. Automated, real-time enforcement.
+
+---
+#### My Solution: Config + Lambda
+
+**The workflow I built:**
+```
+Someone disables S3 Block Public Access (accident or attack)
+        ↓
+AWS Config detects the change within 1 minute
+        ↓
+Config evaluates: s3-account-level-public-access-blocks = NON_COMPLIANT
+        ↓
+EventBridge catches the compliance change event
+        ↓
+Lambda function triggered automatically
+        ↓
+Python code re-enables Block Public Access
+        ↓
+Config re-evaluates: Status back to COMPLIANT
+        ↓
+Total time: ~35 seconds
+```
+**From misconfiguration to remediation in under a minute. No human involved.**
+
+---
+#### The Journey: What Didn't Work First
+
+**I started with the wrong Config rule.**
+
+My first attempt used `s3-bucket-public-read-prohibited` - which sounds right. It checks if individual buckets allow public access.
+
+**The problem:**
+
+This rule is for individual buckets and it checks THREE things:
+1. Bucket-level Block Public Access settings (4 toggles)
+2. Bucket policies with public access grants
+3. Bucket ACLs allowing `AllUsers` or `AuthenticatedUsers`
+
+**What happened when I tested:**
+
+![Bucket Rule Not Working](screenshots/phase3.2/01-bucket-rule-fails.png)
+```
+I disabled Block Public Access on my bucket
+Config still showed: COMPLIANT ✅
+```
+
+Turns out the rule needs BOTH conditions:
+- Block Public Access OFF **AND**
+- An actual public policy or ACL
+
+Just turning off BPA wasn't enough to trigger it.
+
+**So to test this properly, I'd need to:**
+1. Turn OFF bucket-level BPA
+2. Add an inline bucket policy granting public access
+3. Lambda would need to remove the policy AND enable bucket-level BPA
+4. Two API calls, two failure points
+
+---
+
+#### The Better Approach: Account-Level
+
+**I switched to `s3-account-level-public-access-blocks`.**
+
+This rule checks a single thing: Are all 4 Block Public Access settings enabled at the AWS account level?
+
+**Why I chose account-level BPA:**
+
+I wanted to enforce **account-level Block Public Access** as the baseline security control - not individual bucket-level settings.
+
+**Here's the key difference:**
+
+**Bucket-level BPA:**
+- Applies only to that specific bucket
+- Can be toggled on/off per bucket
+- Allows flexibility: some buckets public, others private
+
+**Account-level BPA:**
+- Applies to ALL buckets in the account
+- Overrides bucket-level settings
+- Provides a security backstop
+
+**Critical fact about the hierarchy:**
+
+When account-level Block Public Access is enabled, **you cannot make individual buckets public** - even if you want to. Account-level settings override bucket-level settings and bucket policies.
+
+**Example:**
+```
+Account-level BPA: ON (all 4 settings)
+    ↓
+Bucket "my-public-website": 
+  - Bucket-level BPA: OFF
+  - Bucket policy: Allows public GetObject
+  - Result: STILL PRIVATE ❌ (account-level blocks it)
+```
+
+**This is intentional.** Account-level BPA is designed to be a **fail-safe** - preventing accidental or malicious public exposure across the entire account.
+
+---
+
+#### The Trade-off
+
+**For my demo environment:**
+
+I don't need any public buckets. All my buckets (CloudTrail logs, Config data) should be private. Account-level BPA is perfect.
+
+**Why account-level BPA made sense:**
+
+1. **Better security posture** - Defense in depth, nothing can override it
+2. **Compliance alignment** - CIS AWS Foundations Benchmark recommends account-level BPA
+
+---
+
+#### What About Organizations That Need Public Buckets?
+
+**Valid use cases for public S3 buckets:**
+
+- Static website hosting (marketing sites, documentation)
+- Public datasets (research data, open-source projects)
+- CDN origins (CloudFront distributions)
+- Public file downloads (installers, software updates)
+
+**If I worked for an organization that needed some public buckets, here's what I'd do:**
+
+**Option 1: Separate AWS Accounts (Recommended)**
+```
+AWS Organization
+├── Production Account (account-level BPA ON)
+│   └── Private buckets only
+│
+├── Public Content Account (account-level BPA OFF)
+│   └── Public buckets with strict policies
+│
+└── Development Account (account-level BPA ON)
+    └── Private buckets only
+```
+
+
+
 
