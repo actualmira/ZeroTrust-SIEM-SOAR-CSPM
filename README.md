@@ -1885,9 +1885,9 @@ I don't need any public buckets. All my buckets (CloudTrail logs, Config data) s
 
 **If I worked for an organization that needed some public buckets, here's what I'd do:**
 
-**Option 1: Separate AWS Accounts (Recommended)**
+**Option 1: Separate AWS Accounts**
 ```
-AWS Organization
+Organization AWS Accounts
 ├── Production Account (account-level BPA ON)
 │   └── Private buckets only
 │
@@ -1897,7 +1897,583 @@ AWS Organization
 └── Development Account (account-level BPA ON)
     └── Private buckets only
 ```
+**Why this is best practice:**
+
+- **Blast radius containment** - Public buckets isolated from production data
+- **Different security controls** - Public account has enhanced monitoring
+- **Clear ownership** - Public content team owns their account
+- **Compliance** - Clear separation based on Industry Standard (CIS AWS Foundations Benchmark)
+
+**Option 2: Bucket-Level BPA Only (If Account Separation Is Not Possible)**
+```
+Account-level BPA: OFF (no account-wide enforcement)
+    ↓
+Bucket-by-bucket enforcement:
+  - Bucket A (production data): BPA ON ✅
+  - Bucket B (logs): BPA ON ✅
+  - Bucket C (public website): BPA OFF, strict policy ⚠️
+  - Bucket D (CDN origin): BPA OFF, CloudFront OAI 🔒
+```
+
+**Then use Config rule: `s3-bucket-public-read-prohibited`**
+
+This rule evaluates each bucket individually and flags buckets that are not compliant.
+
+**Remediation strategy:**
+- **Whitelist** approved public bucket/s (tagged with `PublicAccess=Approved`)
+- **Auto-remediate** any other public bucket/s
+
+**Example Lambda logic:**
+```python
+def lambda_handler(event, context):
+    bucket_name = event['detail']['resourceId']
+    
+    # Check if bucket is approved for public access
+    s3 = boto3.client('s3')
+    tags = s3.get_bucket_tagging(Bucket=bucket_name)
+    
+    if 'PublicAccess=Approved' in tags:
+        print(f"Bucket {bucket_name} is approved for public access. Skipping.")
+        return
+
+    # Not approved - remediate
+    s3.put_public_access_block(
+        Bucket=bucket_name,
+        PublicAccessBlockConfiguration={
+            'BlockPublicAcls': True,
+            'IgnorePublicAcls': True,
+            'BlockPublicPolicy': True,
+            'RestrictPublicBuckets': True
+        }
+    )
+    
+   
+```
+
+#### Why I Chose Account-Level for This Demo
+
+**My environment:**
+
+- Single AWS account
+- No public buckets needed
+- All data should be private (CloudTrail logs, Config data, application data)
+
+**Account-level BPA is the right control for this scenario.**
+
+**For a production enterprise:**
+
+I'd recommend **Option 1** (separate accounts) for any organization that needs public buckets. It's cleaner, more secure, and easier to audit.
+
+**The lesson:** There's no one-size-fits-all security control. You choose the right approach based on:
+- Business requirements (do you need public buckets?)
+- Organizational structure (single account vs. multi-account)
+- Compliance requirements (PCI DSS, HIPAA, etc.)
+- Risk tolerance (how much automation vs. manual review)
+
+---
+#### Setting Up AWS Config
+
+**Created the Config rule:**
+
+![Config Rule Setup](screenshots/phase3.2/02-config-rule-creation.png)
+```
+AWS Config → Rules → Add rule
+Search: s3-account-level-public-access-blocks
+```
+
+**Configuration:**
+
+| Setting | Value | Why |
+|---------|-------|-----|
+| **Trigger** | Configuration changes + Every 1 hour | Immediate detection + periodic validation |
+| **Scope** | Resources | Only evaluate specific resource types |
+| **Resource type** | AWS::S3::AccountPublicAccessBlock | The account-level BPA settings |
+| **Remediation** | Not set | Using Lambda via EventBridge instead |
+
+**Why I did not use Config's built-in remediation?**
+
+Config can automatically remediate using Systems Manager documents. But I wanted Lambda because:
+- More flexible (can add SNS notifications, logging, custom logic)
+- Demonstrates serverless skills
+- Real-world production teams use Lambda for complex remediations
+
+---
+
+**Created function: `RemediatePublicS3bucket`**
+
+![Lambda Code](screenshots/phase3.2/05-lambda-function.png)
+```python
+import json
+import boto3
+
+def lambda_handler(event, context):
+    print("Event received:", json.dumps(event))
+    
+    # Initialize S3 control client (not regular S3 client)
+    s3control = boto3.client('s3control')
+    
+    # Get account ID dynamically
+    sts = boto3.client('sts')
+    account_id = sts.get_caller_identity()['Account']
+
+    try:
+        print(f"Enabling account-level Block Public Access for account: {account_id}")
+        
+        # Enable all 4 Block Public Access settings
+        response = s3control.put_public_access_block(
+            AccountId=account_id,
+            PublicAccessBlockConfiguration={
+                'BlockPublicAcls': True,
+                'IgnorePublicAcls': True,
+                'BlockPublicPolicy': True,
+                'RestrictPublicBuckets': True
+            }
+        )
+        print(f"Successfully enabled account-level Block Public Access")
+        
+        return {
+            'statusCode': 200,
+            'body': json.dumps(f'Account-level Block Public Access enabled for account {account_id}')
+        }
+        
+    except Exception as e:
+        print(f"Error enabling Block Public Access: {str(e)}")
+        raise e
+```
+![Lambda Code tet](screenshots/phase3.2/05-lambda-function.png)
+
+---
+**Key points in the code:**
+
+**1. Why `s3control` instead of `s3`?**
+
+Account-level settings use a different API:
+- `boto3.client('s3')` = Bucket operations (GetObject, PutBucketPolicy)
+- `boto3.client('s3control')` = Account-level operations
+
+Took me a minute to figure this out. The regular S3 client doesn't have `put_public_access_block` for accounts.
+
+**2. Why get account ID dynamically?**
+```python
+sts = boto3.client('sts')
+account_id = sts.get_caller_identity()['Account']
+```
+
+I could hardcode `011555818509`, but then this Lambda only works in my account. By querying STS, the same code works in any AWS account. This is how you write reusable infrastructure-as-code.
+
+**3. Error handling:**
+```python
+except Exception as e:
+    print(f"Error: {str(e)}")
+    raise e
+```
+
+If remediation fails (permissions issue, API throttling, etc.), Lambda:
+- Logs the error to CloudWatch
+- Re-raises the exception (marks execution as failed)
+
+**Lambda configuration:**
+
+- **Runtime:** Python 3.12
+- **Memory:** 128 MB (plenty for this)
+- **Timeout:** 30 seconds (API call takes ~2 seconds)
+- **Architecture:** x86_64
+
+---
+
+#### IAM Permissions
+
+**Created a custom policy for the Lambda execution role:**
+
+![Lambda IAM Policy](screenshots/phase3.2/06-lambda-iam-policy.png)
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:PutAccountPublicAccessBlock",
+                "s3:GetAccountPublicAccessBlock"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": "arn:aws:logs:*:*:*"
+        }
+    ]
+}
+```
+**Why these permissions?**
+
+**S3 Control API:**
+- `s3:PutAccountPublicAccessBlock` - Required to enable BPA
+- `s3:GetAccountPublicAccessBlock` - Good practice to check current state
+
+**Why `"Resource": "*"`?**
+
+Account-level settings don't have a specific ARN like `arn:aws:s3:::bucket-name`. The resource IS the account itself. AWS requires `"Resource": "*"` for account-level S3 Control operations.
+
+**CloudWatch Logs:**
+- Lambda needs permission to write logs
+- Critical for debugging when things go wrong
+
+---
+
+#### EventBridge: The Glue
+
+**EventBridge connects Config to Lambda.**
+
+When Config detects NON_COMPLIANT status, it publishes an event. EventBridge catches that event and invokes Lambda.
+
+**Created EventBridge rule:**
+
+![EventBridge Rule](screenshots/phase3.2/07-eventbridge-rule.png)
+```
+Name: AutomediatePublicS3
+Event pattern:
+json
+{
+  "source": ["aws.config"],
+  "detail-type": ["Config Rules Compliance Change"],
+  "detail": {
+    "configRuleName": ["s3-account-level-public-access-blocks"],
+    "newEvaluationResult": {
+      "complianceType": ["NON_COMPLIANT"]
+    }
+  }
+}
+
+Target: Lambda function S3AccountPublicAccessRemediation
+```
+**How this pattern works:**
+
+EventBridge evaluates every event against this pattern. Only events matching ALL conditions trigger the rule:
+
+1. **Source = aws.config** - Filter out other AWS services
+2. **Detail-type = Config Rules Compliance Change** - Config emits many event types
+3. **configRuleName = s3-account-level-public-access-blocks** - Only my specific rule
+4. **complianceType = NON_COMPLIANT** - Don't trigger on COMPLIANT changes
+
+**Mistake I made:**
+
+When I switched from bucket-level to account-level rule, I forgot to update the EventBridge pattern. It still had:
+```json
+"configRuleName": ["s3-bucket-public-read-prohibited"]
+```
+
+So when `s3-account-level-public-access-blocks` went NON_COMPLIANT, nothing happened. EventBridge was filtering it out.
+
+Updated the rule name, saved, and immediately saw Lambda invocations. **Details matter in event patterns.**
+
+---
+#### Testing the Full Workflow
+
+**Time to break things and watch them auto-fix.**
+
+**Step 1: The attack (simulating misconfiguration)**
+
+![Disabling BPA](screenshots/phase3.2/08-disable-bpa.png)
+```
+S3 Console → Block Public Access settings for this account → Edit
+Unchecked all 4 boxes:
+❌ Block public access to buckets and objects granted through new access control lists (ACLs)
+❌ Block public access to buckets and objects granted through any access control lists (ACLs)
+❌ Block public access to buckets and objects granted through new public bucket or access point policies
+❌ Block public access to buckets and objects granted through any public bucket or access point policies
+
+Typed "confirm" → Save
+```
+
+**Timestamp: October 27, 2025 11:41:00 AM UTC**
+
+This simulates either:
+- Developer troubleshooting (accident)
+- Attacker with compromised credentials (malicious)
+
+---
+**Step 2: Detection**
+
+Config evaluations run:
+- Periodically (every 1 hour)
+- On configuration changes (triggered by API calls)
+
+![Config NON_COMPLIANT](screenshots/phase3.2/10-config-noncompliant.png)
+```
+Compliance: Noncompliant ❌
+Last evaluation: October 27, 2025 11:41:29 AM UTC
+```
+
+**Config successfully detected the misconfiguration.** ✅
+
+---
+**Step 3: Automated remediation**
+
+EventBridge caught the compliance change and triggered Lambda.
+
+**Checking CloudWatch Logs:**
+
+![Lambda Logs](screenshots/phase3.2/11-lambda-execution-logs.png)
+```
+2025-10-27T11:41:33.210Z START RequestId: 20581261-07e6-416a-892d-601a15d72186
+
+2025-10-27T11:41:33.210Z Event received: {"version":"0","id":"2e1d51b6-b933-45ca-05a8-dd9997fdddf2",...}
+
+2025-10-27T11:41:35.480Z Enabling account-level Block Public Access for account: 011555818509
+
+2025-10-27T11:41:35.767Z Successfully enabled account-level Block Public Access
+
+2025-10-27T11:41:35.800Z END RequestId: 20581261-07e6-416a-892d-601a15d72186
+
+2025-10-27T11:41:35.800Z REPORT Duration: 2590.53 ms  Billed Duration: 2591 ms  Memory Size: 128 MB  Max Memory Used: 68 MB
+```
+**Timeline:**
+```
+11:41:06 - I disabled BPA
+11:41:29 - Config detected NON_COMPLIANT
+11:41:30 - EventBridge matched pattern
+11:41:33 - Lambda started
+11:41:35 - Lambda completed (2.6 seconds)
+```
+**Total response time: ~29 seconds from misconfiguration to fix.** ⚡
+
+---
+
+**Step 4: Verification**
+
+**Immediately checked S3 settings:**
+
+![BPA Re-enabled](screenshots/phase3.2/12-bpa-reenabled.png)
+```
+Block all public access: On ✅
+  ✅ Block public access to buckets and objects granted through new ACLs
+  ✅ Block public access to buckets and objects granted through any ACLs
+  ✅ Block public access to buckets and objects granted through new public bucket policies
+  ✅ Block public access to buckets and objects granted through any public bucket policies
+```
+
+**All 4 settings back to ON.** ✅
+**Waited 5 minutes, then checked Config:**
+
+![Config COMPLIANT Again](screenshots/phase3.2/13-config-compliant-restored.png)
+```
+Compliance: Compliant ✅
+Last evaluation: October 27, 2025 11:46 AM UTC
+```
+**The complete cycle worked:**
+```
+Misconfiguration → Detection (30 sec) → Remediation (3 sec) → Verification (5 min)
+```
+
+---
+#### What This Demonstrates
+
+**Technical capabilities:**
+
+✅ **AWS Config** - Continuous compliance monitoring  
+✅ **Lambda** - Serverless automation  
+✅ **EventBridge** - Event-driven architecture  
+✅ **IAM** - Least-privilege permissions  
+✅ **Python/Boto3** - AWS automation scripting 
+
+**Security concepts:**
+
+✅ **Continuous monitoring** - Not quarterly audits but real-time detection  
+✅ **Automated remediation** - MTTR reduced from hours to seconds  
+✅ **Defense in depth** - Account-level controls as security backstop  
+✅ **Compliance enforcement** - Aligns with CIS Benchmark   
+✅ **Audit logging** - Complete trail in CloudWatch Logs  
+
+**This is production-grade CSPM.** The same approach cloud security teams use at real companies.
+
+---
+
+#### Production Considerations
+
+**What I built works, but here's what production needs:**
+
+**1. Notifications**
+
+**Current:** Lambda remediates silently.
+
+**Production:** Send SNS alert to security team.
+```python
+sns = boto3.client('sns')
+
+sns.publish(
+    TopicArn='arn:aws:sns:us-east-1:011555818509:SecurityAlerts',
+    Subject='[CSPM] S3 Block Public Access Auto-Remediated',
+    Message=f'Account {account_id} BPA was disabled and has been automatically restored.'
+)
+```
+**Why:** Security team needs to know:
+- Who disabled it (investigate if malicious)
+- When it happened (incident timeline)
+- How long it was disabled (risk assessment)
+
+**2. Exemption workflow**
+
+**Current:** Always remediates immediately.
+
+**Production:** Check for exemption tags.
+```python
+# Check if temporary exemption exists
+tags = s3control.get_account_public_access_block_tags(AccountId=account_id)
+
+if 'CSPMExemption' in tags:
+    expiry = datetime.fromisoformat(tags['CSPMExemption'])
+    if datetime.now() < expiry:
+        print(f"Exemption active until {expiry}. Skipping remediation.")
+        return
+```
+
+**Why:** Sometimes there are legitimate reasons to temporarily disable BPA (testing, troubleshooting). Allow approved exemptions.
+
+**3. Multi-region support**
+
+**Current:** Lambda only in us-east-1.
+
+**Production:** EventBridge rules in all regions forwarding to central Lambda.
+
+**Why:** Config rules can be in multiple regions. Central remediation Lambda handles all.
+
+---
+#### What I Learned
+
+**1. Config rules have nuances**
+
+Managed rules sound straightforward but can have specific requirements may not always be obvious from the description. Always test thoroughly.
+
+**2. Account-level controls simplify enforcement**
+
+Monitoring 100+ individual buckets doesn't scale. One account-level setting = one enforcement point.
+
+**3. EventBridge event patterns are powerful but precise**
+
+One typo in the rule name can prevent triggers. Test your patterns carefully.
+
+**4. Logging is essential**
+
+CloudWatch Logs saved me multiple times. Every `print()` statement helped debug JSON parsing, API calls, and permissions.
+
+**5. Defense in depth requires multiple layers**
+This CSPM automation is ONE layer. It doesn't replace:
+- **Preventive controls** (SCPs blocking dangerous actions)
+- **Detective controls** (CloudTrail logging everything)
+- **Monitoring** (Wazuh/SIEM alerting on patterns)
+
+All layers work together.
+
+---
+### CSPM Summary
+
+**What I built:**
+
+A complete automated compliance enforcement system for AWS S3:
+- **Detection:** AWS Config monitors account-level Block Public Access settings
+- **Alerting:** EventBridge catches compliance violations
+- **Remediation:** Lambda automatically restores secure configuration
+- **Verification:** Config re-evaluates and confirms compliance
+
+**Response time:** ~35 seconds from misconfiguration to fix
+
+**Human involvement:** Zero
+
+**This is what modern cloud security looks like** - continuous monitoring with automated remediation. Not quarterly audits. Not manual fixes. Automated enforcement at cloud scale.
+
+---
 
 
+## **Phase 4: Incident Response Exercise**
+
+### Objective
+
+**Phases 1-3 built the infrastructure. Phase 4 proves it works in a real-time security incident.**
+
+I'm going to simulate an attack, investigate it like a SOC analyst, contain the threat, and document lessons learned. This exercises the complete incident response lifecycle using the monitoring and response functions I've built.
+
+---
+### The Scenario
+
+**Simulated threat:** Insider threat or compromised AWS credentials modify a security group to allow SSH access from anywhere on the internet (0.0.0.0/0).
+
+**Attack details:**
+```
+Target: Security Group sg-0a4561faf39d638c5
+Action: Add inbound rule
+Protocol: TCP
+Port: 22 (SSH)
+Source: 0.0.0.0/0 (Anywhere)
+Description: Backdoor for persistence
+```
+**Why this is serious:**
+
+This is a classic persistence technique seen in real breaches:
+- **SolarWinds (2020):** Attackers modified security groups for backdoor access
+- **Capital One (2019):** Misconfigured firewall rule exposed 100 million records
+- **Common in the wild:** CISA regularly warns about exposed SSH ports
+
+**What an attacker can do with this:**
+
+1. **Brute force SSH** - Automated scanners probe the internet for open SSH
+2. **Exploit vulnerabilities** - If SSH daemon has CVEs, attackers exploit them
+3. **Lateral movement** - Once inside, pivot to other AWS resources
+4. **Data exfiltration** - Copy sensitive data from the compromised instance
+5. **Cryptocurrency mining** - Use your compute for profit
+
+---
+### The NIST Incident Response Framework
+
+I'm following **NIST SP 800-61** - the standard incident response lifecycle:
+```
+1. Preparation → Monitoring infrastructure (Phases 1-3)
+2. Detection & Analysis → Identify the attack
+3. Containment → Stop the threat
+4. Eradication → Remove attacker foothold
+5. Recovery → Restore normal operations
+6. Post-Incident → Document lessons learned
+```
+---
+
+### Phase 2: Detection & Analysis
+
+#### 2.1 The Attack (Red Team Hat On)
+
+**Simulating the attacker's actions:**
+
+![Opening SSH to Internet](screenshots/phase4/01-attack-open-ssh.png)
+```
+AWS Console → EC2 → Security Groups → sg-0a4561faf39d638c5
+Inbound rules → Edit inbound rules → Add rule
+
+Type: SSH
+Protocol: TCP
+Port range: 22
+Source: 0.0.0.0/0
+Description: Malicious rule - IR testing
+
+Save rules
+```
+
+**Red team documentation:**
+```
+ATTACK LOG
+==========
+Persona: Insider with AWS console access
+Target: Security Group sg-0a4561faf39d638c5
+Method: AWS Management Console
+Time: 2025-10-27 15:41:48 UTC
+Goal: Create backdoor for persistent access
+MITRE ATT&CK: T1562.007 (Impair Defenses: Disable Cloud Firewall)
+```
+**2.2 Detection (Blue Team Hat On)**
+Expected detection: Wazuh
+I built the SIEM in Phase 2 specifically for this. Rule 100010 should have fired:
 
 
