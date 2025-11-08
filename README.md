@@ -354,7 +354,7 @@ Wazuh Manager also needs to ingest  VPC Flow Logs from CloudWatchLogs. The `aws-
 
 **3. AmazonSSMManagedInstanceCore:**
 
-Session Manager access for secure administrative tasks (checking logs, restarting services, troubleshooting) which eliminates the risk of open SSH port or SSH key management. All connections use IAM authentication over encrypted HTTPS channel, with full session logging to CloudWatch/S3. .
+Session Manager access for secure administrative tasks (checking logs, restarting services, troubleshooting) which eliminates the risk of open SSH port or SSH key management. All connections use IAM authentication over encrypted HTTPS channel, with full session logging to CloudWatch.
 
 **Least privilege consideration:**
 
@@ -506,7 +506,6 @@ This is useful for:
 I configured VPC Flow Logs to write to CloudWatch Logs instead of S3 to prioritize **detection speed** for this demonstration:
 
 - **Real-time ingestion:** 1-2 minute latency vs. 10-15 minutes with S3
-- **Immediate active response:** Port scans trigger IP blocking within minutes
 - **Dual ingestion demonstration:** Shows proficiency with both S3 (CloudTrail) and CloudWatch (Flow Logs) integration methods
 
 **Production Considerations:**
@@ -516,7 +515,15 @@ In an enterprise environment with high traffic volumes (>100GB/day), VPC Flow Lo
 
 **IAM Role for VPC Flow Logs:**
 
-This follows least privilege - only the VPC Flow Logs service can
+**Automatic Role Creation:**
+
+When creating VPC Flow Logs with CloudWatch Logs as the destination, AWS automatically creates an IAM role with the trust policy and permissions needed.
+
+**Least Privilege Principle:**
+- **Limited scope:** Role only has permissions for CloudWatch Logs actions
+- **Resource restriction:** Only affects the specific VPC Flow Logs log group
+- **Service-specific:** Only the VPC Flow Logs service can assume this role (not users or other services)
+- **No cross-account access:** Restricted to resources in this AWS account
 
 #### Security Posture Achieved
 
@@ -571,7 +578,7 @@ I needed a SIEM that could:
 - Be free/open-source (budget constraint for demo)
 
 **Options I considered:**
-- **Splunk** - Powerful but expensive, requires license even for demo
+- **Splunk** - Industry standard SIEM but not cost effective for demo projects.
 - **Wazuh** - Open-source, built-in AWS integration, agent-based monitoring ✅
 
 Wazuh is essentially ELK (now OpenSearch) with security-focused pre-built features : agents, decoders, rules, and CloudTrail integration.
