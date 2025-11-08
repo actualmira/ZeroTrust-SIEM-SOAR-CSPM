@@ -350,11 +350,11 @@ Read-only is sufficient - Wazuh only needs to `GetObject` and `ListBucket`, not 
 
 **2. CloudWatchLogsReadOnlyAccess:**
 
-For VPC Flow Logs integration which I configured to go to CloudWatchLogs. 
+Wazuh Manager also needs to ingest  VPC Flow Logs from CloudWatchLogs. The `aws-s3` module in Wazuh also polls the loggroup with aws `cloudwatchlogs` service type. 
 
 **3. AmazonSSMManagedInstanceCore:**
 
-Session Manager access for administrative tasks (checking logs, restarting services, troubleshooting).
+Session Manager access for secure administrative tasks (checking logs, restarting services, troubleshooting) which eliminates the risk of open SSH port or SSH key management. All connections use IAM authentication over encrypted HTTPS channel, with full session logging to CloudWatch/S3. .
 
 **Least privilege consideration:**
 
@@ -499,8 +499,20 @@ This is useful for:
 | Setting | Value | Why |
 |---------|-------|-----|
 | **Filter** | All (Accept + Reject) | See both allowed and blocked traffic |
-| **Destination** | Cloudwatch Log | Long-term storage |
-| **Aggregation** | 10 minutes | Balance between detail and cost |
+| **Destination** | Cloudwatch Log | Real-time threat detection |
+
+**Architectural Decision: CloudWatch Logs vs. S3**
+
+I configured VPC Flow Logs to write to CloudWatch Logs instead of S3 to prioritize **detection speed** for this demonstration:
+
+- **Real-time ingestion:** 1-2 minute latency vs. 10-15 minutes with S3
+- **Immediate active response:** Port scans trigger IP blocking within minutes
+- **Dual ingestion demonstration:** Shows proficiency with both S3 (CloudTrail) and CloudWatch (Flow Logs) integration methods
+
+**Production Considerations:**
+
+In an enterprise environment with high traffic volumes (>100GB/day), VPC Flow Logs should be integrated to S3 for cost optimization:
+
 
 **IAM Role for VPC Flow Logs:**
 
