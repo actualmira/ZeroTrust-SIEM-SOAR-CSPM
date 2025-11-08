@@ -20,25 +20,40 @@ I integrated:
  
  -**Cloud Security Posture Management (CSPM)** for continuous compliance monitoring (using **AWS Config/EventBus/Python/Boto3 Lambda function**).
  
--I **validated** the impementation through a documented **Incident Response Exercise**, where I simulated an attack (**Red Team**), detected and remediated it (**Blue Team**)
 
 ### 🎯Why This Project Matters
 
 Modern cloud environments face critical security challenges:
-- **Lack of visibility:** Absence of comprehensive logging into AWS API activity and infrastructure changes limits effective monitoring and early detection of security-sensitive events.
-- **Delayed threat detection:** - Traditional perimeter security and reactive logging can be insufficient, resulting in extended attacker dwell time.
+- **Lack of visibility:** Without comprehensive logging of AWS API activity, network traffic patterns and infrastructure changes, security teams operate blindly; they may be unable to detect changes until a significant damage has occured
+- **Delayed threat detection:** - Traditional reactive logging approaches can leave organizations vulnerable for hours or days, giving attackers extended dwell time to move laterally, escalate privileges and exfiltrate data
 - **Manual incident response:** - Manual incident handling processes lead to high Mean Time To Respond (MTTR), increasing the potential impact of a breach.
-- **Configuration drift:** - Continuous changes in cloud environments can lead to security misconfigurations, creating immediate exposure risk.
-- **Compliance gaps:** - Difficulty proving continuous adherence to standards (e.g., PCI DSS, HIPAA) due to lack of real-time monitoring and automated reporting.
-
+- **Configuration drift:** - Cloud environments change constantly. A single misconfiguration like accidentally exposing an S3 bucket or opening SSH to 0.0.0.0/0 creates immediate exposure that attackers actively scan for and exploit within minutes.
+- **Compliance gaps:** - Organizations struggle to prove continuous adherence to security standards (PCI DSS, HIPAA, NIST) without real-time monitoring, automated evidence collection, and audit-ready reporting.
+  
 ### 💡 Why It Works
 
-A **three-phase security architecture** implementing:
+I built a **three-phase defense-in-depth security architecture** that addresses each challenge:
 
-1. **Protect (Preventative Guardrails)** - Network Segmentation with least-privilege access controls to reduce attack surface.
-2. **Detect (Centralized Visibility)** - Centralized SIEM/FIM for real-time file integrity monitoring, log aggregation, custom correlation, and high-fidelity threat detection for API activity in a cloud environment.
-3. **Respond (Automated Containment):** - Automated incident containment (SOAR) and compliance enforcement (CSPM)
+#### 1. **Protect (Preventative Guardrails)**
+Network segmentation with least-privilege access controls to minimize attack surface:
+- Private subnets with no direct internet access
+- Restrictive security groups (allow only necessary traffic)
+- AWS Systems Manager Session Manager (which eliminates SSH exposure)
 
+#### 2. **Detect (Centralized Visibility)**
+Multi-layered monitoring that provides complete visibility into API activity, network traffic and system behavior:
+- **CloudTrail:** Every AWS API call is logged with full context of who, what, when, where and how
+- **VPC Flow Logs:** Shows Network-level visibility with source/destination IPs, ports, protocols and accept/reject decisions
+- **Wazuh SIEM/FIM:** Real-time correlation engine processing logs from multiple sources, detecting attack patterns through custom rules and monitoring file integrity on critical systems
+- **Custom detection rules:** High-fidelity alerts for security-critical events (security group changes, IAM modifications, S3 policy updates)
+
+#### 3. **Respond (Automated Containment)**
+Event-driven automation which eliminates manual response delays:
+- **SOAR (Wazuh Active Response):** Automatic IP blocking when brute force attack is detected and containing the attack in seconds instead of hours
+- **CSPM (AWS Config + Lambda):** Continuous compliance monitoring with automated remediation when there is a security posture change (e.g., S3 Block Public Access disabled → auto-re-enabled in under 60 seconds)
+- **EventBridge orchestration:** Event-driven architecture ensuring immediate response to compliance violations
+
+This architecture transforms security from just being reactive to being proactive for threat prevention, with detection and response happening faster than an attacker can exploit vulnerabilities.
 
 
 ---
